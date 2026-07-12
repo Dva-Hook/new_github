@@ -215,28 +215,43 @@ def build_solver_harness(public_key: str, blob: str, surl: str, language: str = 
 
 def replace_document_under_origin(page, website_url: str, html: str) -> Dict[str, Any]:
     expected_origin = origin_from_url(website_url)
-    nav_error = ""
+    parsed_url = urlsplit(website_url)
+    target_url = f"{expected_origin}{parsed_url.path or '/'}"
+    if parsed_url.query:
+        target_url += f"?{parsed_url.query}"
     try:
-        page.goto(expected_origin + "/", wait_until="domcontentloaded", timeout=30_000)
-    except Exception as exc:
-        nav_error = f"{type(exc).__name__}: {exc}"
-    try:
-        page.evaluate("window.stop()")
+        # Do not load the live Battle.net document and then document.write() over it:
+        # that page can redirect/reload while Playwright is evaluating JS, causing
+        # "Execution context was destroyed". Instead, fulfill a same-origin URL with
+        # the harness directly. The resulting document still has the desired
+        # account.battle.net origin/path for Arkose, but there is no competing page
+        # navigation.
+        page.route(
+            target_url,
+            lambda route: route.fulfill(
+                status=200,
+                content_type="text/html; charset=utf-8",
+                body=html,
+            ),
+        )
+        response = page.goto(target_url, wait_until="domcontentloaded", timeout=30_000)
+        actual = page.evaluate("() => ({url: location.href, origin: location.origin})")
     except Exception:
-        pass
-    actual = page.evaluate("() => ({url: location.href, origin: location.origin})")
+        # Best-effort cleanup before surfacing the real navigation/injection error.
+        try:
+            page.unroute(target_url)
+        except Exception:
+            pass
+        raise
     if actual.get("origin") != expected_origin:
-        raise RuntimeError(f"origin mismatch: expected={expected_origin}, actual={actual}, nav_error={nav_error}")
-    page.evaluate(
-        """html => {
-            window.stop();
-            document.open();
-            document.write(html);
-            document.close();
-        }""",
-        html,
-    )
-    return {"expectedOrigin": expected_origin, "beforeReplace": actual, "navigationError": nav_error}
+        raise RuntimeError(f"origin mismatch: expected={expected_origin}, actual={actual}, target_url={target_url}")
+    return {
+        "expectedOrigin": expected_origin,
+        "targetURL": target_url,
+        "afterRouteFulfill": actual,
+        "responseStatus": response.status if response else None,
+        "method": "route-fulfill",
+    }
 
 
 def challenge_dom_summary(page) -> Dict[str, Any]:
@@ -563,6 +578,7 @@ def main() -> int:
             logger.warning("original browser close before solver failed: %s: %s", type(exc).__name__, exc)
         finally:
             original_browser = None
+            original_page = None
 
         logger.info("launch solver browser: port=%s headless=%s", SOLVER_PORT, headless)
         solver_browser, _, solver_page = create_solver_browser(ctx.get("userAgent"), headless=headless)
@@ -602,7 +618,7 @@ def main() -> int:
         logger.error("snapshot failed: %s: %s", type(exc).__name__, exc, exc_info=True)
         write_json(out / "summary.json", {"ok": False, "error": f"{type(exc).__name__}: {exc}", "outputDir": str(out.resolve())})
         try:
-            if "original_page" in locals():
+            if locals().get("original_page") is not None:
                 screenshot(original_page, out / "error_original_page.png")
         except Exception:
             pass

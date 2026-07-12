@@ -1,0 +1,250 @@
+name: Battle.net auto register (RuyiPage Firefox)
+
+on:
+  workflow_dispatch:
+    inputs:
+      capmonster_key:
+        description: "CapMonster Cloud API Key (required for RuyiPage backend)"
+        required: false
+        default: ""
+      count:
+        description: "parallel registration count (1-256)"
+        required: false
+        default: "1"
+      max_parallel:
+        description: "max parallel jobs"
+        required: false
+        default: "10"
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      indices: ${{ steps.gen.outputs.indices }}
+      max_parallel: ${{ steps.gen.outputs.max_parallel }}
+    steps:
+      - name: Generate matrix
+        id: gen
+        run: |
+          N=${{ github.event.inputs.count }}
+          N=${N:-1}
+          if [ "$N" -gt 256 ]; then N=256; fi
+          P=${{ github.event.inputs.max_parallel }}
+          P=${P:-10}
+          if [ "$P" -gt 20 ]; then P=20; fi
+          indices=$(python3 -ESs -c 'import json,sys; n=int(sys.argv[1]); print(json.dumps(list(range(1, n+1))))' "$N")
+          echo "indices=$indices" >> $GITHUB_OUTPUT
+          echo "max_parallel=$P" >> $GITHUB_OUTPUT
+          echo "matrix size: $N, max_parallel: $P"
+
+  deps-cache:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache wheelhouse
+        id: wheelhouse
+        uses: actions/cache@v5
+        with:
+          path: .wheelhouse
+          key: ruyipage-wheelhouse-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage.txt', 'requirements.txt', 'yolo/requirements.txt') }}
+          restore-keys: |
+            ruyipage-wheelhouse-${{ runner.os }}-py312-
+
+      - name: Build wheelhouse
+        if: steps.wheelhouse.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          python -m pip install --upgrade pip
+          mkdir -p .wheelhouse
+          pip download -r requirements-ruyipage.txt -d .wheelhouse
+          echo "wheel count: $(find .wheelhouse -type f -name '*.whl' | wc -l)"
+
+      - name: Cache virtualenv
+        id: venv
+        uses: actions/cache@v5
+        with:
+          path: .venv
+          key: ruyipage-venv-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage.txt', 'requirements.txt', 'yolo/requirements.txt') }}
+          restore-keys: |
+            ruyipage-venv-${{ runner.os }}-py312-
+
+      - name: Build virtualenv
+        if: steps.venv.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          if [ -n "$(find .wheelhouse -type f -name '*.whl' -print -quit 2>/dev/null)" ]; then
+            .venv/bin/pip install --no-index --find-links .wheelhouse -r requirements-ruyipage.txt
+          else
+            .venv/bin/pip install -r requirements-ruyipage.txt
+          fi
+          .venv/bin/python - <<'PY'
+          import importlib.util
+          mods = ["ruyipage", "websocket", "requests", "onnxruntime", "cv2", "PIL", "numpy", "ultralytics"]
+          missing = [m for m in mods if importlib.util.find_spec(m) is None]
+          if missing:
+              raise SystemExit(f"missing modules: {missing}")
+          print("venv dependency check OK")
+          PY
+
+      - name: Cache RuyiPage Firefox runtime
+        id: ruyi-runtime
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ruyipage
+          key: ruyipage-firefox-${{ runner.os }}-v1
+          restore-keys: |
+            ruyipage-firefox-${{ runner.os }}-
+
+      - name: Warm RuyiPage Firefox runtime
+        if: steps.ruyi-runtime.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          .venv/bin/python -m ruyipage install
+          .venv/bin/python -m ruyipage doctor
+
+  register:
+    needs: [prepare, deps-cache]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJson(needs.prepare.outputs.max_parallel) }}
+      matrix:
+        index: ${{ fromJson(needs.prepare.outputs.indices) }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restore virtualenv
+        id: venv
+        uses: actions/cache@v5
+        with:
+          path: .venv
+          key: ruyipage-venv-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage.txt', 'requirements.txt', 'yolo/requirements.txt') }}
+          restore-keys: |
+            ruyipage-venv-${{ runner.os }}-py312-
+
+      - name: Restore wheelhouse fallback
+        if: steps.venv.outputs.cache-hit != 'true'
+        id: wheelhouse
+        uses: actions/cache@v5
+        with:
+          path: .wheelhouse
+          key: ruyipage-wheelhouse-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage.txt', 'requirements.txt', 'yolo/requirements.txt') }}
+          restore-keys: |
+            ruyipage-wheelhouse-${{ runner.os }}-py312-
+
+      - name: Restore RuyiPage Firefox runtime
+        id: ruyi-runtime
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ruyipage
+          key: ruyipage-firefox-${{ runner.os }}-v1
+          restore-keys: |
+            ruyipage-firefox-${{ runner.os }}-
+
+      - name: Activate/install dependencies
+        env:
+          VENV_CACHE_HIT: ${{ steps.venv.outputs.cache-hit }}
+        run: |
+          set -e
+          if [ "$VENV_CACHE_HIT" != "true" ] || [ ! -x .venv/bin/python ]; then
+            echo "venv exact cache miss; installing/updating from wheelhouse/pip"
+            python -m venv .venv
+            .venv/bin/python -m pip install --upgrade pip
+            if [ -n "$(find .wheelhouse -type f -name '*.whl' -print -quit 2>/dev/null)" ]; then
+              .venv/bin/pip install --no-index --find-links .wheelhouse -r requirements-ruyipage.txt
+            else
+              .venv/bin/pip install -r requirements-ruyipage.txt
+            fi
+          else
+            echo "venv exact cache hit; skip pip install"
+          fi
+          echo "$PWD/.venv/bin" >> $GITHUB_PATH
+          .venv/bin/python -V
+          if ! .venv/bin/python -m ruyipage doctor; then
+            echo "RuyiPage Firefox runtime missing; installing"
+            .venv/bin/python -m ruyipage install
+            .venv/bin/python -m ruyipage doctor
+          else
+            echo "RuyiPage Firefox runtime cache hit; skip install"
+          fi
+
+      - name: Mask CapMonster key
+        if: ${{ github.event.inputs.capmonster_key != '' }}
+        run: echo "::add-mask::${{ github.event.inputs.capmonster_key }}"
+
+      - name: Run register with RuyiPage Firefox
+        env:
+          CAPMONSTER_API_KEY: ${{ github.event.inputs.capmonster_key }}
+          PYTHONUNBUFFERED: "1"
+          MATRIX_INDEX: "${{ matrix.index }}"
+          RUYIPAGE_HEADLESS: "1"
+        run: python register_ruyipage.py
+
+      - name: Upload screenshots/debug data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruyi-reg-data-${{ matrix.index }}
+          path: |
+            success.png
+            error_*.png
+            captcha_solve_debug/**
+            ruyipage_failure_snapshots/**
+          if-no-files-found: ignore
+
+      - name: Upload account data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruyi-reg-accounts-${{ matrix.index }}
+          path: registered_account.txt
+          if-no-files-found: ignore
+
+  collect:
+    needs: register
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all account artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ruyi-reg-accounts-*
+          path: all_accounts
+          merge-multiple: false
+
+      - name: Merge account files
+        run: |
+          > all_accounts.txt
+          for f in all_accounts/*/registered_account.txt; do
+            [ -f "$f" ] && cat "$f" >> all_accounts.txt && echo "" >> all_accounts.txt
+          done
+          [ -s all_accounts.txt ] || echo "(no successful accounts)" > all_accounts.txt
+
+      - name: Upload merged account data
+        uses: actions/upload-artifact@v4
+        with:
+          name: all-ruyipage-registered-accounts
+          path: all_accounts.txt
+          if-no-files-found: ignore

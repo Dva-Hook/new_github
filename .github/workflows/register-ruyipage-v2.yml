@@ -1,0 +1,317 @@
+name: Battle.net auto register (RuyiPage v2 + YesCaptcha)
+
+on:
+  workflow_dispatch:
+    inputs:
+      yescaptcha_key:
+        description: "YesCaptcha API Key"
+        required: true
+        type: string
+      count:
+        description: "number of registration jobs (1-256)"
+        required: true
+        default: "1"
+        type: string
+      max_parallel:
+        description: "maximum concurrent matrix jobs (1-256)"
+        required: true
+        default: "10"
+        type: string
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      indices: ${{ steps.matrix.outputs.indices }}
+      max_parallel: ${{ steps.matrix.outputs.max_parallel }}
+    steps:
+      - name: Validate inputs and generate matrix
+        id: matrix
+        env:
+          REQUESTED_COUNT: ${{ inputs.count }}
+          REQUESTED_MAX_PARALLEL: ${{ inputs.max_parallel }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          def bounded_int(name: str, raw: str, upper: int) -> int:
+              try:
+                  value = int(raw)
+              except (TypeError, ValueError):
+                  raise SystemExit(f"{name} must be an integer, got {raw!r}")
+              if not 1 <= value <= upper:
+                  raise SystemExit(f"{name} must be in 1..{upper}, got {value}")
+              return value
+
+          count = bounded_int("count", os.environ["REQUESTED_COUNT"], 256)
+          max_parallel = bounded_int(
+              "max_parallel", os.environ["REQUESTED_MAX_PARALLEL"], 256
+          )
+          max_parallel = min(max_parallel, count)
+          output = Path(os.environ["GITHUB_OUTPUT"])
+          with output.open("a", encoding="utf-8") as fp:
+              fp.write(f"indices={json.dumps(list(range(1, count + 1)))}\n")
+              fp.write(f"max_parallel={max_parallel}\n")
+          print(f"matrix size: {count}, max_parallel: {max_parallel}")
+          PY
+
+  deps-cache:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache wheelhouse
+        id: wheelhouse
+        uses: actions/cache@v5
+        with:
+          path: .wheelhouse
+          key: ruyipage-wheelhouse-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage.txt', 'requirements.txt', 'yolo/requirements.txt') }}
+          restore-keys: |
+            ruyipage-wheelhouse-${{ runner.os }}-py312-
+
+      - name: Build wheelhouse
+        if: steps.wheelhouse.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          mkdir -p .wheelhouse
+          pip download -r requirements-ruyipage.txt -d .wheelhouse
+          echo "wheel count: $(find .wheelhouse -type f -name '*.whl' | wc -l)"
+
+      - name: Cache virtualenv
+        id: venv
+        uses: actions/cache@v5
+        with:
+          path: .venv
+          key: ruyipage-venv-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage.txt', 'requirements.txt', 'yolo/requirements.txt') }}
+          restore-keys: |
+            ruyipage-venv-${{ runner.os }}-py312-
+
+      - name: Build virtualenv
+        if: steps.venv.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          if [ -n "$(find .wheelhouse -type f -name '*.whl' -print -quit 2>/dev/null)" ]; then
+            .venv/bin/pip install --no-index --find-links .wheelhouse -r requirements-ruyipage.txt
+          else
+            .venv/bin/pip install -r requirements-ruyipage.txt
+          fi
+          .venv/bin/python - <<'PY'
+          import importlib.util
+
+          modules = ["cloakbrowser", "ruyipage", "websocket", "requests", "PIL"]
+          missing = [name for name in modules if importlib.util.find_spec(name) is None]
+          if missing:
+              raise SystemExit(f"missing modules: {missing}")
+          print("RuyiPage v2 dependency check OK")
+          PY
+
+      - name: Cache RuyiPage Firefox runtime
+        id: ruyi-runtime
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ruyipage
+          key: ruyipage-firefox-${{ runner.os }}-v1
+          restore-keys: |
+            ruyipage-firefox-${{ runner.os }}-
+
+      - name: Warm RuyiPage Firefox runtime
+        if: steps.ruyi-runtime.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          .venv/bin/python -m ruyipage install
+          .venv/bin/python -m ruyipage doctor
+
+  register:
+    needs: [prepare, deps-cache]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(needs.prepare.outputs.max_parallel) }}
+      matrix:
+        index: ${{ fromJSON(needs.prepare.outputs.indices) }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restore virtualenv
+        id: venv
+        uses: actions/cache@v5
+        with:
+          path: .venv
+          key: ruyipage-venv-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage.txt', 'requirements.txt', 'yolo/requirements.txt') }}
+          restore-keys: |
+            ruyipage-venv-${{ runner.os }}-py312-
+
+      - name: Restore wheelhouse fallback
+        if: steps.venv.outputs.cache-hit != 'true'
+        uses: actions/cache@v5
+        with:
+          path: .wheelhouse
+          key: ruyipage-wheelhouse-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage.txt', 'requirements.txt', 'yolo/requirements.txt') }}
+          restore-keys: |
+            ruyipage-wheelhouse-${{ runner.os }}-py312-
+
+      - name: Restore RuyiPage Firefox runtime
+        id: ruyi-runtime
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ruyipage
+          key: ruyipage-firefox-${{ runner.os }}-v1
+          restore-keys: |
+            ruyipage-firefox-${{ runner.os }}-
+
+      - name: Activate or install dependencies
+        env:
+          VENV_CACHE_HIT: ${{ steps.venv.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          if [ "$VENV_CACHE_HIT" != "true" ] || [ ! -x .venv/bin/python ]; then
+            python -m venv .venv
+            .venv/bin/python -m pip install --upgrade pip
+            if [ -n "$(find .wheelhouse -type f -name '*.whl' -print -quit 2>/dev/null)" ]; then
+              .venv/bin/pip install --no-index --find-links .wheelhouse -r requirements-ruyipage.txt
+            else
+              .venv/bin/pip install -r requirements-ruyipage.txt
+            fi
+          else
+            echo "virtualenv cache hit"
+          fi
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          .venv/bin/python -V
+          if ! .venv/bin/python -m ruyipage doctor; then
+            .venv/bin/python -m ruyipage install
+            .venv/bin/python -m ruyipage doctor
+          fi
+
+      - name: Mask YesCaptcha API key
+        env:
+          YESCAPTCHA_API_KEY: ${{ inputs.yescaptcha_key }}
+        run: echo "::add-mask::$YESCAPTCHA_API_KEY"
+
+      - name: Run RuyiPage v2 registration
+        env:
+          YESCAPTCHA_API_KEY: ${{ inputs.yescaptcha_key }}
+          PYTHONUNBUFFERED: "1"
+          MATRIX_INDEX: "${{ matrix.index }}"
+        run: |
+          python register_ruyipage_v2.py \
+            --headless \
+            --network-mode 1 \
+            --click-style human \
+            --human-move-min-ms 800 \
+            --human-move-max-ms 1400
+
+      - name: Export successful account
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          import shutil
+          from pathlib import Path
+
+          root = Path("ruyipage_yescaptcha_register/runs")
+          summaries = list(root.glob("run_*/summary.json"))
+          if not summaries:
+              print("No RuyiPage v2 run output found")
+              raise SystemExit(0)
+
+          summary_path = max(summaries, key=lambda path: path.stat().st_mtime_ns)
+          run_dir = summary_path.parent
+          registration_path = run_dir / "registration_result.json"
+          account_path = run_dir / "account_generated.json"
+          if not registration_path.exists() or not account_path.exists():
+              print(f"Run output is incomplete: {run_dir}")
+              raise SystemExit(0)
+
+          registration = json.loads(registration_path.read_text(encoding="utf-8"))
+          account = json.loads(account_path.read_text(encoding="utf-8"))
+          if not registration.get("ok"):
+              print(f"Registration did not succeed: {run_dir}")
+              raise SystemExit(0)
+
+          Path("registered_account.txt").write_text(
+              f"账号：{account['email']}\n密码：{account['password']}\n\n",
+              encoding="utf-8",
+          )
+          screenshot = run_dir / "original_screenshots" / "registration_success.png"
+          if screenshot.exists():
+              shutil.copy2(screenshot, "success.png")
+          print(f"Exported successful account from {run_dir}")
+          PY
+
+      - name: Upload screenshots and debug data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruyi-v2-reg-data-${{ matrix.index }}
+          path: |
+            success.png
+            ruyipage_yescaptcha_register/runs/**
+          if-no-files-found: ignore
+
+      - name: Upload account data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruyi-v2-reg-accounts-${{ matrix.index }}
+          path: registered_account.txt
+          if-no-files-found: ignore
+
+  collect:
+    needs: register
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all account artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ruyi-v2-reg-accounts-*
+          path: all_accounts
+          merge-multiple: false
+
+      - name: Merge account files
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          files = sorted(Path("all_accounts").glob("**/registered_account.txt"))
+          chunks = [path.read_text(encoding="utf-8").rstrip() for path in files]
+          output = "\n\n".join(chunk for chunk in chunks if chunk).strip()
+          if output:
+              output += "\n"
+          else:
+              output = "(no successful accounts)\n"
+          Path("all_accounts.txt").write_text(output, encoding="utf-8")
+          print(f"Merged {len(files)} account file(s)")
+          PY
+
+      - name: Upload merged account data
+        uses: actions/upload-artifact@v4
+        with:
+          name: all-ruyipage-v2-registered-accounts
+          path: all_accounts.txt
+          if-no-files-found: error

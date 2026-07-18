@@ -583,7 +583,7 @@ class BrowserResourceOptimizer:
         *,
         proxy_enabled: bool,
         direct_public_static: bool = True,
-        direct_challenge_images: bool = True,
+        direct_challenge_images: bool = False,
         block_nonessential: bool = True,
         fetch_timeout: float = 8.0,
         max_entry_bytes: int = 8 * MIB,
@@ -1025,7 +1025,11 @@ class BrowserResourceOptimizer:
         )[:30]
         return {
             "enabled": True,
-            "mode": "bandwidth-first-challenge-images-and-public-static-direct",
+            "mode": (
+                "experimental-challenge-images-and-public-static-direct"
+                if self.direct_challenge_images
+                else "quality-first-public-static-direct-cache"
+            ),
             "proxyEnabled": self.proxy_enabled,
             "directPublicStaticEnabled": self.direct_public_static,
             "directChallengeImagesEnabled": self.direct_challenge_images,

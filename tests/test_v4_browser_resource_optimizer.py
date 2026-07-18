@@ -253,7 +253,7 @@ def test_signed_challenge_image_is_fetched_direct_and_never_cached(tmp_path):
             return FetchOutcome(self.response, "ok-ephemeral-image", 0.01)
 
     fetcher = ImageFetcher(response)
-    app = optimizer(tmp_path, fetcher)
+    app = optimizer(tmp_path, fetcher, direct_challenge_images=True)
     request = FakeRequest(CHALLENGE_IMAGE, request_id="challenge-image")
 
     app._handle_request(request)
@@ -278,7 +278,7 @@ def test_challenge_image_direct_failure_falls_back_and_opens_circuit(tmp_path):
             return FetchOutcome(None, "status-403", 0.01)
 
     fetcher = FailingImageFetcher(None)
-    app = optimizer(tmp_path, fetcher)
+    app = optimizer(tmp_path, fetcher, direct_challenge_images=True)
     first = FakeRequest(CHALLENGE_IMAGE, request_id="first")
     second = FakeRequest(
         CHALLENGE_IMAGE.replace("challenge=0", "challenge=1"),

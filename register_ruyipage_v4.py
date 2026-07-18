@@ -892,14 +892,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--direct-challenge-images",
         dest="direct_challenge_images",
         action="store_true",
-        default=True,
-        help="download signed Arkose challenge images runner-direct (default)",
+        default=False,
+        help="experimental: download signed Arkose challenge images runner-direct",
     )
     direct_images.add_argument(
         "--no-direct-challenge-images",
         dest="direct_challenge_images",
         action="store_false",
-        help="keep signed Arkose challenge images on the configured browser route",
+        help="keep signed Arkose challenge images on the proxy route (default)",
     )
     parser.add_argument("--static-fetch-timeout", type=float, default=8.0)
     parser.add_argument("--static-cache-max-entry-mib", type=float, default=8.0)

@@ -292,6 +292,133 @@ def write_proxy_traffic_report(out: Path, report: Mapping[str, Any]) -> None:
             write_json(summary_path, summary)
 
 
+def capture_proxy_traffic_snapshot(
+    meter: Optional[ProxyTrafficMeter],
+) -> dict[str, Any]:
+    if meter is None:
+        return {}
+    snapshot = getattr(meter, "snapshot", None)
+    if not callable(snapshot):
+        return {}
+    value = snapshot()
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _proxy_traffic_delta(
+    start: Mapping[str, Any],
+    end: Mapping[str, Any],
+) -> dict[str, Any]:
+    upload = max(0, int(end.get("uploadBytes") or 0) - int(start.get("uploadBytes") or 0))
+    download = max(
+        0,
+        int(end.get("downloadBytes") or 0) - int(start.get("downloadBytes") or 0),
+    )
+    total = upload + download
+    duration = max(
+        0.0,
+        float(end.get("durationSeconds") or 0.0)
+        - float(start.get("durationSeconds") or 0.0),
+    )
+    return {
+        "uploadBytes": upload,
+        "downloadBytes": download,
+        "totalBytes": total,
+        "uploadMiB": round(upload / MIB, 4),
+        "downloadMiB": round(download / MIB, 4),
+        "totalMiB": round(total / MIB, 4),
+        "connections": max(
+            0,
+            int(end.get("connections") or 0) - int(start.get("connections") or 0),
+        ),
+        "failures": max(
+            0,
+            int(end.get("failures") or 0) - int(start.get("failures") or 0),
+        ),
+        "durationSeconds": round(duration, 3),
+    }
+
+
+def build_proxy_traffic_phase_report(
+    snapshots: Mapping[str, Mapping[str, Any]],
+    final_report: Mapping[str, Any],
+) -> dict[str, Any]:
+    boundaries = {
+        name: dict(value)
+        for name, value in snapshots.items()
+        if isinstance(value, Mapping) and value
+    }
+    if final_report:
+        boundaries["final"] = dict(final_report)
+
+    phase_specs = (
+        ("protocolToCaptcha", "start", "captchaGate"),
+        ("arkoseSolver", "captchaGate", "tokenReady"),
+        ("captchaSubmit", "tokenReady", "final"),
+    )
+    phases: dict[str, dict[str, Any]] = {}
+    for name, start_name, end_name in phase_specs:
+        start = boundaries.get(start_name)
+        end = boundaries.get(end_name)
+        if start and end:
+            phases[name] = {
+                "startBoundary": start_name,
+                "endBoundary": end_name,
+                **_proxy_traffic_delta(start, end),
+            }
+
+    start = boundaries.get("start") or {}
+    final = boundaries.get("final") or {}
+    measured = _proxy_traffic_delta(start, final) if start and final else {}
+    accounted = sum(int(item.get("totalBytes") or 0) for item in phases.values())
+    measured_total = int(measured.get("totalBytes") or 0)
+    unaccounted = max(0, measured_total - accounted)
+    return {
+        "enabled": bool(final_report.get("enabled")),
+        "boundaries": boundaries,
+        "phases": phases,
+        "measured": measured,
+        "accountedBytes": accounted,
+        "accountedMiB": round(accounted / MIB, 4),
+        "unaccountedBytes": unaccounted,
+        "unaccountedMiB": round(unaccounted / MIB, 4),
+        "complete": all(name in phases for name, *_unused in phase_specs),
+    }
+
+
+def write_proxy_traffic_phase_report(out: Path, report: Mapping[str, Any]) -> None:
+    clean_report = dict(report)
+    write_json(out / "proxy_traffic_phases.json", clean_report)
+    summary_path = out / "summary.json"
+    if summary_path.is_file():
+        summary = read_json_object(summary_path)
+        summary["proxyTrafficPhases"] = clean_report
+        write_json(summary_path, summary)
+
+
+def log_proxy_traffic_phases(report: Mapping[str, Any]) -> None:
+    for name in ("protocolToCaptcha", "arkoseSolver", "captchaSubmit"):
+        phase = dict((report.get("phases") or {}).get(name) or {})
+        if not phase:
+            continue
+        LOG.info(
+            "Proxy traffic phase %s: upload=%.4f MiB download=%.4f MiB "
+            "total=%.4f MiB bytes=%s connections=%s failures=%s",
+            name,
+            float(phase.get("uploadMiB") or 0.0),
+            float(phase.get("downloadMiB") or 0.0),
+            float(phase.get("totalMiB") or 0.0),
+            int(phase.get("totalBytes") or 0),
+            int(phase.get("connections") or 0),
+            int(phase.get("failures") or 0),
+        )
+    if int(report.get("unaccountedBytes") or 0):
+        LOG.info(
+            "Proxy traffic unaccounted: %.4f MiB bytes=%s",
+            float(report.get("unaccountedMiB") or 0.0),
+            int(report.get("unaccountedBytes") or 0),
+        )
+
+
 def read_json_object(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -691,6 +818,7 @@ def main() -> int:
     identity: dict[str, str] = {}
     proxy = ProxySettings(None, "direct")
     traffic_meter: Optional[ProxyTrafficMeter] = None
+    traffic_snapshots: dict[str, dict[str, Any]] = {}
     runtime_proxy_url: Optional[str] = None
     started = time.perf_counter()
     try:
@@ -753,6 +881,7 @@ def main() -> int:
                 runtime_proxy_url,
                 proxy.display,
             )
+            traffic_snapshots["start"] = capture_proxy_traffic_snapshot(traffic_meter)
 
         client = BattleProtocolClient(
             state,
@@ -774,6 +903,7 @@ def main() -> int:
         arkose = dict(state.data.get("arkose") or {})
         if not arkose.get("blob"):
             arkose = client.recover_arkose_from_last_response()
+        traffic_snapshots["captchaGate"] = capture_proxy_traffic_snapshot(traffic_meter)
         LOG.info(
             "Arkose context: source=%s siteKey=%s blobLength=%s",
             arkose.get("source"),
@@ -823,6 +953,7 @@ def main() -> int:
             )
             LOG.info("RuyiPage returned Arkose token, length=%s", len(token))
 
+        traffic_snapshots["tokenReady"] = capture_proxy_traffic_snapshot(traffic_meter)
         outcome = client.submit_captcha(token)
         success = outcome.get("status") == "success" and bool(outcome.get("success"))
         registration = {
@@ -915,6 +1046,12 @@ def main() -> int:
             with contextlib.suppress(Exception):
                 report = traffic_meter.stop()
                 write_proxy_traffic_report(out, report)
+                phase_report = build_proxy_traffic_phase_report(
+                    traffic_snapshots,
+                    report,
+                )
+                write_proxy_traffic_phase_report(out, phase_report)
+                log_proxy_traffic_phases(phase_report)
                 LOG.info(
                     "Proxy traffic total: upload=%.4f MiB download=%.4f MiB "
                     "total=%.4f MiB bytes=%s connections=%s failures=%s",

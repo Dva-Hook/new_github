@@ -28,9 +28,19 @@ When a proxy is configured, V4 starts a local counting forwarder. Both the HTTP 
 
 ```text
 ruyipage_http_v11_register/runs/run_*/proxy_traffic.json
+ruyipage_http_v11_register/runs/run_*/proxy_traffic_phases.json
 ```
 
-The same object is added to `summary.json` as `proxyTraffic`. Counters include upstream proxy handshakes and tunneled TLS bytes, but not TCP/IP packet framing.
+The total is added to `summary.json` as `proxyTraffic`. The phase report is
+added as `proxyTrafficPhases` and splits the same measured bytes into:
+
+- `protocolToCaptcha`: persistent HTTP registration through `captcha-gate`.
+- `arkoseSolver`: RuyiPage startup, Arkose traffic, and challenge solving.
+- `captchaSubmit`: final token submission and remaining connection shutdown.
+
+Counters include upstream proxy handshakes and tunneled TLS bytes, but not
+TCP/IP packet framing. `accountedBytes` and `unaccountedBytes` verify whether
+the three phase deltas cover the complete meter total.
 
 Also accepted by the script:
 

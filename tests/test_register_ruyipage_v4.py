@@ -166,9 +166,31 @@ def test_main_returns_v11_token_to_original_http_session(tmp_path, monkeypatch):
     class FakeMeter:
         def __init__(self, upstream_url):
             calls["meter_upstream"] = upstream_url
+            self.snapshot_index = 0
 
         def start(self):
             return "http://127.0.0.1:43210"
+
+        def snapshot(self):
+            snapshots = (
+                (0, 0, 0),
+                (30, 270, 1),
+                (70, 730, 2),
+            )
+            upload, download, connections = snapshots[self.snapshot_index]
+            self.snapshot_index += 1
+            return {
+                "enabled": True,
+                "uploadBytes": upload,
+                "downloadBytes": download,
+                "totalBytes": upload + download,
+                "uploadMiB": round(upload / (1024 * 1024), 4),
+                "downloadMiB": round(download / (1024 * 1024), 4),
+                "totalMiB": round((upload + download) / (1024 * 1024), 4),
+                "connections": connections,
+                "failures": 0,
+                "durationSeconds": float(self.snapshot_index),
+            }
 
         def stop(self):
             return {
@@ -278,9 +300,20 @@ def test_main_returns_v11_token_to_original_http_session(tmp_path, monkeypatch):
     assert summary["countryProbe"] is True
     assert summary["proxy"]["hasAuth"] is True
     assert summary["proxyTraffic"]["totalBytes"] == 1000
+    phases = summary["proxyTrafficPhases"]
+    assert phases["complete"] is True
+    assert phases["phases"]["protocolToCaptcha"]["totalBytes"] == 300
+    assert phases["phases"]["arkoseSolver"]["totalBytes"] == 500
+    assert phases["phases"]["captchaSubmit"]["totalBytes"] == 200
+    assert phases["accountedBytes"] == 1000
+    assert phases["unaccountedBytes"] == 0
     traffic = json.loads((run_dir / "proxy_traffic.json").read_text("utf-8"))
     assert traffic["uploadBytes"] == 100
     assert traffic["downloadBytes"] == 900
+    phase_file = json.loads(
+        (run_dir / "proxy_traffic_phases.json").read_text("utf-8")
+    )
+    assert phase_file["phases"] == phases["phases"]
     assert "secret" not in json.dumps(summary)
 
 

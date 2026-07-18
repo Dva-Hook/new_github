@@ -76,6 +76,11 @@ def test_ruyi_launch_uses_proxy_but_never_logs_credentials(tmp_path, monkeypatch
     assert calls["preferences"] == app._FIREFOX_LOW_TRAFFIC_PREFS
     assert calls["preferences"]["services.settings.server"] == "data:,"
     assert calls["preferences"]["network.connectivity-service.enabled"] is False
+    assert calls["preferences"]["media.gmp-manager.updateEnabled"] is False
+    assert calls["preferences"]["media.gmp-gmpopenh264.enabled"] is False
+    assert calls["preferences"]["network.proxy.no_proxies_on"] == ",".join(
+        app._FIREFOX_BACKGROUND_DIRECT_HOSTS
+    )
     assert calls["browser_path"] == "/runtime/firefox"
     assert calls["bypass"] is True
     assert "secret" not in caplog.text
@@ -160,6 +165,50 @@ def test_low_traffic_filter_keeps_arkose_images_and_blocks_only_nonessential_ass
     assert app.should_block_resource("https://cdn.example.net/font.woff2")
     assert app.should_block_resource("https://www.google-analytics.com/collect")
     assert not app.should_block_resource("https://account.battle.net/main.js")
+
+
+def test_undecodable_matched_challenge_is_reclassified_as_retryable(
+    monkeypatch,
+    tmp_path,
+):
+    original = app.v3.UnsupportedCaptchaQuestion(
+        {
+            "questionMatched": True,
+            "sizeMatched": False,
+            "imageSize": None,
+        }
+    )
+
+    def fail(*_args, **_kwargs):
+        raise original
+
+    monkeypatch.setattr(app.v3, "auto_solve_solver_tab", fail)
+
+    with pytest.raises(RuntimeError, match="retry required") as caught:
+        app.run_v4_solver_tab(None, None, SimpleNamespace(), tmp_path)
+
+    assert type(caught.value) is RuntimeError
+    assert caught.value.__cause__ is original
+
+
+def test_real_unsupported_challenge_keeps_exit_classification(monkeypatch, tmp_path):
+    original = app.v3.UnsupportedCaptchaQuestion(
+        {
+            "questionMatched": True,
+            "sizeMatched": False,
+            "imageSize": [1000, 400],
+        }
+    )
+
+    def fail(*_args, **_kwargs):
+        raise original
+
+    monkeypatch.setattr(app.v3, "auto_solve_solver_tab", fail)
+
+    with pytest.raises(app.v3.UnsupportedCaptchaQuestion) as caught:
+        app.run_v4_solver_tab(None, None, SimpleNamespace(), tmp_path)
+
+    assert caught.value is original
 
 
 def test_protocol_success_metadata_is_authoritative():

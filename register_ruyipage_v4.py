@@ -209,6 +209,11 @@ _BLOCKED_EXTENSIONS = (
     ".mp3",
     ".wav",
 )
+_FIREFOX_BACKGROUND_DIRECT_HOSTS = (
+    "ciscobinary.openh264.org",
+    "content-signature-2.cdn.mozilla.net",
+    "aus5.mozilla.org",
+)
 _FIREFOX_LOW_TRAFFIC_PREFS: dict[str, Any] = {
     "app.normandy.api_url": "",
     "app.normandy.enabled": False,
@@ -229,12 +234,19 @@ _FIREFOX_LOW_TRAFFIC_PREFS: dict[str, Any] = {
     "extensions.getAddons.cache.enabled": False,
     "extensions.systemAddon.update.enabled": False,
     "extensions.update.enabled": False,
+    "media.gmp-gmpopenh264.autoupdate": False,
+    "media.gmp-gmpopenh264.enabled": False,
+    "media.gmp-manager.updateEnabled": False,
+    "media.gmp-manager.url": "",
+    "media.gmp-widevinecdm.autoupdate": False,
+    "media.gmp-widevinecdm.enabled": False,
     "network.captive-portal-service.enabled": False,
     "network.connectivity-service.enabled": False,
     "network.dns.disablePrefetch": True,
     "network.http.speculative-parallel-limit": 0,
     "network.predictor.enabled": False,
     "network.prefetch-next": False,
+    "network.proxy.no_proxies_on": ",".join(_FIREFOX_BACKGROUND_DIRECT_HOSTS),
     "security.remote_settings.crlite_filters.enabled": False,
     "security.remote_settings.intermediates.enabled": False,
     "services.settings.server": "data:,",
@@ -329,6 +341,26 @@ def launch_ruyi_browser(
     with contextlib.suppress(Exception):
         page.set_bypass_csp(True)
     return page
+
+
+def run_v4_solver_tab(
+    page: Any,
+    image_catcher: Any,
+    args: argparse.Namespace,
+    out: Path,
+) -> dict[str, Any]:
+    try:
+        return v3.auto_solve_solver_tab(page, image_catcher, args, out)
+    except v3.UnsupportedCaptchaQuestion as exc:
+        details = dict(getattr(exc, "details", {}) or {})
+        if (
+            details.get("questionMatched") is True
+            and details.get("imageSize") is None
+        ):
+            raise RuntimeError(
+                "transient Arkose challenge image response was not decodable; retry required"
+            ) from exc
+        raise
 
 
 def redact_proxy_text(value: Any, proxy: ProxySettings, raw_proxy: str = "") -> str:
@@ -764,7 +796,7 @@ def solve_arkose_with_ruyi(
         if args.debug_screenshots:
             base.screenshot(page, out / "solver_screenshots" / "harness_loaded.png")
 
-        result = v3.auto_solve_solver_tab(page, image_catcher, args, out)
+        result = run_v4_solver_tab(page, image_catcher, args, out)
         write_json(
             out / "local_v11_solver_result.json",
             {key: value for key, value in result.items() if key != "token"},

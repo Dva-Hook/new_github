@@ -62,6 +62,9 @@ socks5://username:password@host:port
 - Firefox Remote Settings, updates, telemetry, extension refresh, Safe Browsing
   list refresh, prefetch, and speculative connections are disabled before the
   RuyiPage process starts. Arkose and Battle.net page traffic remains enabled.
+- Firefox GMP/OpenH264 and Widevine auto-downloads are disabled. Their Mozilla
+  update hosts bypass the configured proxy as a fallback, so browser component
+  downloads cannot consume metered registration proxy traffic.
 - Browser fonts, media, and common analytics hosts are blocked; Arkose assets and challenge images remain enabled.
 - Per-wave screenshots are disabled unless `--debug-screenshots` is supplied.
 - V11 is loaded once per matrix job and reused across all challenge waves and retries.

@@ -1,0 +1,326 @@
+name: Battle.net auto register (HTTP + RuyiPage V4 + local V11)
+
+on:
+  workflow_dispatch:
+    inputs:
+      count:
+        description: "number of registration jobs (1-256)"
+        required: true
+        default: "1"
+        type: string
+      max_parallel:
+        description: "maximum concurrent jobs (1-20)"
+        required: true
+        default: "10"
+        type: string
+      proxy:
+        description: "optional proxy: ip:port:username:password (blank = GitHub direct)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      indices: ${{ steps.matrix.outputs.indices }}
+      max_parallel: ${{ steps.matrix.outputs.max_parallel }}
+    steps:
+      - name: Validate inputs and generate matrix
+        id: matrix
+        env:
+          REQUESTED_COUNT: ${{ inputs.count }}
+          REQUESTED_MAX_PARALLEL: ${{ inputs.max_parallel }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          def bounded_int(name, raw, upper):
+              try:
+                  value = int(raw)
+              except (TypeError, ValueError):
+                  raise SystemExit(f"{name} must be an integer, got {raw!r}")
+              if not 1 <= value <= upper:
+                  raise SystemExit(f"{name} must be in 1..{upper}, got {value}")
+              return value
+
+          count = bounded_int("count", os.environ["REQUESTED_COUNT"], 256)
+          requested_parallel = bounded_int(
+              "max_parallel", os.environ["REQUESTED_MAX_PARALLEL"], 20
+          )
+          max_parallel = min(requested_parallel, count, 20)
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as fp:
+              fp.write(f"indices={json.dumps(list(range(1, count + 1)))}\n")
+              fp.write(f"max_parallel={max_parallel}\n")
+          print(f"matrix size: {count}, max_parallel: {max_parallel}")
+          PY
+
+  deps-cache:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Cache V4 virtualenv
+        id: venv
+        uses: actions/cache@v5
+        with:
+          path: .venv
+          key: ruyipage-v4-venv-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage-v4.txt', 'rank_v11/requirements.txt') }}
+
+      - name: Build V4 virtualenv
+        if: steps.venv.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/pip install torch torchvision \
+            --index-url https://download.pytorch.org/whl/cpu
+          .venv/bin/pip install -r requirements-ruyipage-v4.txt
+          .venv/bin/python - <<'PY'
+          import importlib.util
+          required = [
+              "ruyipage", "curl_cffi", "bs4", "websocket", "requests",
+              "PIL", "numpy", "cv2", "torch", "torchvision",
+          ]
+          missing = [name for name in required if importlib.util.find_spec(name) is None]
+          if missing:
+              raise SystemExit(f"missing modules: {missing}")
+          import register_ruyipage_v4
+          print("V4 dependency check OK")
+          PY
+
+      - name: Cache RuyiPage Firefox runtime
+        id: ruyi-runtime
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ruyipage
+          key: ruyipage-firefox-${{ runner.os }}-v1
+
+      - name: Install RuyiPage Firefox runtime
+        if: steps.ruyi-runtime.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          .venv/bin/python -m ruyipage install
+          .venv/bin/python -m ruyipage doctor
+
+  register:
+    needs: [prepare, deps-cache]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(needs.prepare.outputs.max_parallel) }}
+      matrix:
+        index: ${{ fromJSON(needs.prepare.outputs.indices) }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Restore V4 virtualenv
+        id: venv
+        uses: actions/cache@v5
+        with:
+          path: .venv
+          key: ruyipage-v4-venv-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage-v4.txt', 'rank_v11/requirements.txt') }}
+
+      - name: Restore RuyiPage Firefox runtime
+        id: ruyi-runtime
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ruyipage
+          key: ruyipage-firefox-${{ runner.os }}-v1
+
+      - name: Repair missing cached dependencies
+        if: steps.venv.outputs.cache-hit != 'true' || steps.ruyi-runtime.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          if [ ! -x .venv/bin/python ]; then
+            python -m venv .venv
+            .venv/bin/python -m pip install --upgrade pip
+            .venv/bin/pip install torch torchvision \
+              --index-url https://download.pytorch.org/whl/cpu
+            .venv/bin/pip install -r requirements-ruyipage-v4.txt
+          fi
+          if ! .venv/bin/python -m ruyipage doctor >/dev/null 2>&1; then
+            .venv/bin/python -m ruyipage install
+            .venv/bin/python -m ruyipage doctor
+          fi
+
+      - name: Ensure Xvfb is available
+        run: |
+          if ! command -v xvfb-run >/dev/null 2>&1 || ! command -v xauth >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq xvfb xauth
+          fi
+
+      - name: Start persistent local V11 service
+        env:
+          RANK_V11_URL: http://127.0.0.1:8765
+          RANK_V11_CACHE_DIR: ${{ runner.temp }}/rank_v11_cache_${{ matrix.index }}
+        run: |
+          set -euo pipefail
+          nohup .venv/bin/python rank_v11/server.py \
+            --host 127.0.0.1 \
+            --port 8765 \
+            --device cpu \
+            --cpu-threads 2 \
+            --mode accurate \
+            --cache-dir "$RANK_V11_CACHE_DIR" \
+            > rank_v11_server.log 2>&1 &
+          echo $! > rank_v11_server.pid
+
+      - name: Run HTTP + RuyiPage V4 registration
+        env:
+          RANK_V11_URL: http://127.0.0.1:8765
+          REGISTRATION_PROXY: ${{ inputs.proxy }}
+          PYTHONUNBUFFERED: "1"
+        run: |
+          set +e
+          if [ -n "$REGISTRATION_PROXY" ]; then
+            echo "::add-mask::$REGISTRATION_PROXY"
+          fi
+          last_rc=1
+          for attempt in 1 2 3; do
+            echo "::group::V4 registration attempt ${attempt}/3"
+            xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+              .venv/bin/python register_ruyipage_v4.py \
+                --proxy "$REGISTRATION_PROXY" \
+                --click-style balanced \
+                --rank-v11-url "$RANK_V11_URL"
+            last_rc=$?
+            echo "V4 attempt ${attempt}/3 exited with ${last_rc}"
+            echo "::endgroup::"
+            if [ "$last_rc" -eq 0 ]; then
+              exit 0
+            fi
+            if [ "$last_rc" -eq 42 ]; then
+              echo "Unsupported Arkose classification; stop without retry"
+              exit 42
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              sleep $((attempt * 3))
+            fi
+          done
+          exit "$last_rc"
+
+      - name: Stop local V11 service
+        if: always()
+        run: |
+          if [ -f rank_v11_server.pid ]; then
+            kill "$(cat rank_v11_server.pid)" 2>/dev/null || true
+          fi
+
+      - name: Export successful account
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("ruyipage_http_v11_register/runs")
+          records = []
+          seen = set()
+          for account_path in sorted(root.glob("run_*/account_generated.json")):
+              run_dir = account_path.parent
+              result_path = run_dir / "registration_result.json"
+              if not result_path.is_file():
+                  continue
+              result = json.loads(result_path.read_text(encoding="utf-8"))
+              if not result.get("ok"):
+                  continue
+              account = json.loads(account_path.read_text(encoding="utf-8"))
+              email = str(account.get("email") or "")
+              if not email or email.lower() in seen:
+                  continue
+              seen.add(email.lower())
+              outcome = result.get("outcome") or {}
+              records.append(
+                  "\n".join(
+                      [
+                          f"Account: {email}",
+                          f"Password: {account.get('password', '')}",
+                          f"BattleTag: {account.get('battle_tag', '')}",
+                          f"PlayerAccountId: {outcome.get('playerAccountId', '')}",
+                      ]
+                  )
+              )
+          if records:
+              Path("registered_account.txt").write_text(
+                  "\n\n".join(records) + "\n", encoding="utf-8"
+              )
+          print(f"Recovered {len(records)} successful account(s)")
+          PY
+
+      - name: Upload V4 run data
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: ruyi-v4-http-local-reg-data-${{ matrix.index }}
+          path: |
+            rank_v11_server.log
+            ruyipage_http_v11_register/runs/**
+          if-no-files-found: ignore
+          compression-level: 6
+
+      - name: Upload V4 account data
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: ruyi-v4-http-local-reg-accounts-${{ matrix.index }}
+          path: registered_account.txt
+          if-no-files-found: ignore
+          compression-level: 9
+
+  collect:
+    needs: register
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all V4 account artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v7
+        with:
+          pattern: ruyi-v4-http-local-reg-accounts-*
+          path: all_accounts
+          merge-multiple: false
+
+      - name: Merge account files
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          files = sorted(Path("all_accounts").glob("**/registered_account.txt"))
+          chunks = [path.read_text(encoding="utf-8").strip() for path in files]
+          output = "\n\n".join(chunk for chunk in chunks if chunk).strip()
+          Path("all_accounts.txt").write_text(
+              (output + "\n") if output else "(no successful accounts)\n",
+              encoding="utf-8",
+          )
+          print(f"Merged {len(files)} account file(s)")
+          PY
+
+      - name: Upload merged V4 account data
+        uses: actions/upload-artifact@v6
+        with:
+          name: all-ruyipage-v4-http-local-registered-accounts
+          path: all_accounts.txt
+          if-no-files-found: error
+          compression-level: 9

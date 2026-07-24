@@ -50,8 +50,13 @@ With `network=direct`, `IP.txt` is not read and the GitHub runner route is used.
 
 - `v11`: opens the selected browser, captures Arkose challenge images, calls the
   local V11 service, submits each answer, and returns the completed token.
-- `yescaptcha`: opens the selected browser and reuses the V2 per-image
-  `FunCaptchaClassification` loop.
+- `yescaptcha`: opens the selected browser and uses the per-image
+  `FunCaptchaClassification` API. The solver loop is ported from the verified
+  local V4 implementation: it reads the rendered question again for every
+  wave, removes only the `(n of m)` suffix, accepts compact RTIG strips, retries
+  transient provider failures with the same image, and uses the local V4
+  RuyiPage baseline of balanced native clicks with a random `250..600ms` gap
+  between arrow clicks. CloakBrowser keeps its existing adapter click path.
 - `capmonster`: sends the HTTP-captured Arkose context to CapMonster and receives
   the completed token directly. No solver browser is needed in this branch.
 

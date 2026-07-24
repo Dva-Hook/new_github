@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import json
 import logging
 import os
+import random
 import sys
 import time
 import traceback
@@ -18,6 +20,7 @@ from typing import Any, Mapping, Optional
 import requests
 
 import register_ruyipage_v4 as v4
+import v5_yescaptcha_solver
 from battle_protocol_flow_v4 import BattleProtocolClient, PersistentFlowState
 from proxy_traffic_meter import ProxyTrafficMeter
 from v5_cloak_adapter import (
@@ -34,10 +37,6 @@ REGISTRATION_COUNTRY = "GBR"
 DEFAULT_YESCAPTCHA_API_URL = "https://api.yescaptcha.com/createTask"
 DEFAULT_CAPMONSTER_CREATE_URL = "https://api.capmonster.cloud/createTask"
 DEFAULT_CAPMONSTER_RESULT_URL = "https://api.capmonster.cloud/getTaskResult"
-DEFAULT_QUESTION = (
-    "use the arrows to move the characters until they are standing on the same "
-    "icons as in the picture on the left"
-)
 
 
 def force_utf8_stdio() -> None:
@@ -101,7 +100,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_YESCAPTCHA_API_URL,
     )
     parser.add_argument("--yescaptcha-timeout", type=float, default=35.0)
-    parser.add_argument("--question", default=DEFAULT_QUESTION)
+    parser.add_argument("--click-interval-min-ms", type=int, default=250)
+    parser.add_argument("--click-interval-max-ms", type=int, default=600)
     parser.add_argument(
         "--capmonster-key",
         default=os.environ.get("CAPMONSTER_API_KEY", ""),
@@ -268,6 +268,343 @@ def _install_cloak_resource_filter(page: Any, enabled: bool) -> None:
     page.context.route("**/*", route_handler)
 
 
+class V5RuyiYesCaptchaImageCatcher(v4.v3.RuyiArkoseImageCatcher):
+    """V4-compatible catcher that accepts compact Arkose RTIG strips."""
+
+    def wait_new_challenge(
+        self,
+        seen: set[str],
+        timeout: float,
+        stop_page: Any = None,
+    ) -> Optional[dict[str, Any]]:
+        deadline = time.time() + max(0.0, float(timeout))
+        while time.time() < deadline:
+            if stop_page is not None:
+                with contextlib.suppress(Exception):
+                    if v4.base.captcha_state(stop_page) in ("success", "rejected"):
+                        return None
+            with self._lock:
+                ready = [
+                    dict(record)
+                    for record in self.captured_images
+                    if record.get("body_bytes")
+                ]
+            ready.sort(
+                key=lambda record: (
+                    0
+                    if "/rtig/image" in str(record.get("url") or "").lower()
+                    else 1,
+                    record.get("timestamp") or 0,
+                )
+            )
+            for record in ready:
+                data = record.get("body_bytes") or b""
+                sha = record.get("sha256") or hashlib.sha256(data).hexdigest()
+                if sha in seen:
+                    continue
+                size = record.get("size") or v4.v3.image_size(data)
+                if size:
+                    width, height = size
+                    is_rtig = "/rtig/image" in str(
+                        record.get("url") or ""
+                    ).lower()
+                    valid_rtig = is_rtig and 300 <= height <= 650
+                    valid_generic = width >= 800 and 300 <= height <= 650
+                    if not valid_rtig and not valid_generic:
+                        seen.add(sha)
+                        LOG.info(
+                            "[%s] ignore non-challenge image size=%sx%s url=%s",
+                            self.label,
+                            width,
+                            height,
+                            str(record.get("url") or "")[:120],
+                        )
+                        continue
+                return record
+            self._event.wait(0.5)
+            self._event.clear()
+        return None
+
+
+def save_yescaptcha_image_record(
+    record: dict[str, Any],
+    out_dir: Path,
+    wave: int,
+) -> Path:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    data = record.get("body_bytes") or b""
+    sha = record.get("sha256") or hashlib.sha256(data).hexdigest()
+    extension = v4.v3.image_ext(record.get("mime") or "", data)
+    path = out_dir / f"yescaptcha_wave_{wave:02d}_{sha[:12]}{extension}"
+    path.write_bytes(data)
+    metadata = {
+        key: value for key, value in record.items() if key != "body_bytes"
+    }
+    metadata.update({"file": str(path), "sha256": sha, "bytes": len(data)})
+    write_json(
+        out_dir / f"yescaptcha_wave_{wave:02d}_{sha[:12]}.json",
+        metadata,
+    )
+    return path
+
+
+_TERMINAL_SOLVER_STATUSES = frozenset(
+    {
+        "onFailed",
+        "onError",
+        "run-error",
+        "setConfig-error",
+        "script-error",
+    }
+)
+
+
+def solver_terminal_reason(page: Any) -> str:
+    state = v4.v3.solver_state(page)
+    status = str(state.get("status") or "").strip()
+    completed = state.get("completedPayload")
+    rejection = v4.v3.completion_rejection_reason(completed)
+    if rejection:
+        return f"Arkose completion rejected: {rejection}"
+    if status in _TERMINAL_SOLVER_STATUSES:
+        detail = str(state.get("error") or "").strip()
+        suffix = f": {detail}" if detail else ""
+        return f"Arkose solver terminal status: {status}{suffix}"
+    if v4.base.captcha_state(page) == "rejected":
+        return "Arkose challenge page is rejected"
+    return ""
+
+
+def wait_image_or_token_fast(
+    catcher: Any,
+    seen: set[str],
+    timeout: float,
+    solver_tab: Any,
+) -> tuple[str, Any]:
+    deadline = time.time() + max(0.0, float(timeout))
+    while time.time() < deadline:
+        token = v4.v3.wait_token_quick(solver_tab, 0.1)
+        if token:
+            return "token", token
+        terminal = solver_terminal_reason(solver_tab)
+        if terminal:
+            return "terminal", terminal
+        remaining = max(0.05, deadline - time.time())
+        record = catcher.wait_new_challenge(
+            seen,
+            timeout=min(0.7, remaining),
+            stop_page=solver_tab,
+        )
+        if record:
+            return "image", record
+    token = v4.v3.wait_token_quick(solver_tab, 0.2)
+    if token:
+        return "token", token
+    terminal = solver_terminal_reason(solver_tab)
+    if terminal:
+        return "terminal", terminal
+    return "timeout", None
+
+
+def click_next_n_v4(page: Any, count: int, args: argparse.Namespace) -> bool:
+    count = max(0, int(count))
+    LOG.info("Click the next-image arrow %s times", count)
+    minimum = max(0, int(args.click_interval_min_ms))
+    maximum = max(minimum, int(args.click_interval_max_ms))
+    for index in range(count):
+        clicked = False
+        for attempt in range(3):
+            before = v4.v3.current_index(page)
+            if not v4.v3.click_arrow(page, "right", timeout=4):
+                return False
+            after = v4.v3.wait_index_change(page, before)
+            if before < 0 or after != before:
+                LOG.info(
+                    "Next click %s/%s ok: before=%s after=%s",
+                    index + 1,
+                    count,
+                    before,
+                    after,
+                )
+                clicked = True
+                break
+            LOG.warning(
+                "Next click %s/%s may have been ignored: retry=%s "
+                "before=%s after=%s",
+                index + 1,
+                count,
+                attempt + 1,
+                before,
+                after,
+            )
+        if not clicked:
+            return False
+        if index + 1 < count:
+            delay = random.randint(minimum, maximum) / 1000.0
+            LOG.info("Waiting %sms before the next arrow click", round(delay * 1000))
+            time.sleep(delay)
+    return True
+
+
+def auto_solve_yescaptcha_tab(
+    solver_tab: Any,
+    catcher: Any,
+    args: argparse.Namespace,
+    out: Path,
+) -> dict[str, Any]:
+    """Use the verified local V4 per-wave YesCaptcha state machine."""
+
+    api_key = str(args.yescaptcha_key or "").strip()
+    if not api_key:
+        raise RuntimeError("YesCaptcha API key is empty")
+    images_dir = out / "yescaptcha_images"
+    actions: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    token = v4.v3.wait_token_quick(solver_tab, 2.0, "initial ")
+    if token:
+        return v4.v3.build_token_result(solver_tab, token, actions)
+    if not v4.v3.ensure_verify_or_image(
+        solver_tab,
+        catcher,
+        args.verify_timeout,
+    ):
+        LOG.warning("No challenge image confirmed after Verify; keep waiting")
+
+    for wave in range(args.max_waves):
+        token = v4.v3.wait_token_quick(solver_tab, 1.0, f"wave{wave} pre ")
+        if token:
+            return v4.v3.build_token_result(solver_tab, token, actions)
+        terminal = solver_terminal_reason(solver_tab)
+        if terminal:
+            return {"ok": False, "error": terminal, "actions": actions}
+
+        kind, value = wait_image_or_token_fast(
+            catcher,
+            seen,
+            args.first_image_timeout if wave == 0 else args.next_image_timeout,
+            solver_tab,
+        )
+        if kind == "token":
+            return v4.v3.build_token_result(solver_tab, str(value), actions)
+        if kind == "terminal":
+            return {"ok": False, "error": str(value), "actions": actions}
+        record = value
+        if not record:
+            token = v4.v3.wait_token_quick(
+                solver_tab,
+                args.after_submit_token_wait,
+                f"wave{wave} no-image ",
+            )
+            if token:
+                return v4.v3.build_token_result(solver_tab, token, actions)
+            state = v4.base.captcha_state(solver_tab)
+            sample = v4.base.captcha_text(solver_tab).replace("\n", " ")[:260]
+            return {
+                "ok": False,
+                "error": f"no new challenge image at wave={wave}, state={state}",
+                "actions": actions,
+                "sample": sample,
+            }
+
+        data = record.get("body_bytes") or b""
+        sha = record.get("sha256") or hashlib.sha256(data).hexdigest()
+        seen.add(sha)
+        image_path = save_yescaptcha_image_record(record, images_dir, wave)
+        if args.debug_screenshots:
+            v4.base.screenshot(
+                solver_tab,
+                out / "solver_screenshots" / f"wave_{wave:02d}_before_answer.png",
+            )
+
+        question = v5_yescaptcha_solver.extract_dynamic_prompt(
+            solver_tab,
+            v4.base.all_contexts,
+            timeout=min(5.0, max(0.5, float(args.yescaptcha_timeout))),
+        )
+        write_json(
+            images_dir / f"yescaptcha_wave_{wave:02d}_question.json",
+            question,
+        )
+        answer, api_result = v5_yescaptcha_solver.classify_image(
+            image_path,
+            question=question["prompt"],
+            api_key=api_key,
+            api_url=args.yescaptcha_api_url,
+            timeout=args.yescaptcha_timeout,
+            response_path=(
+                images_dir / f"yescaptcha_wave_{wave:02d}_response.json"
+            ),
+        )
+        retries = int(api_result.get("retries") or 0)
+        if retries:
+            reasons = ",".join(
+                str(item) for item in (api_result.get("reasons") or [])
+            ) or "unknown"
+            LOG.info(
+                "YesCaptcha same-image recovery wave=%s retries=%s "
+                "reasons=%s reencoded=%s",
+                wave,
+                retries,
+                reasons,
+                bool(api_result.get("imageReencoded")),
+            )
+        LOG.info(
+            "YesCaptcha answer=%s wave=%s question=%r",
+            answer,
+            wave,
+            question["prompt"],
+        )
+        if not click_next_n_v4(solver_tab, answer, args):
+            return {
+                "ok": False,
+                "error": f"failed to click next {answer} times at wave={wave}",
+                "actions": actions,
+            }
+        time.sleep(0.08 + random.random() * 0.08)
+        submit_ok = v4.v3.click_submit(solver_tab)
+        action = {
+            "wave": wave,
+            "image": str(image_path),
+            "sha256": sha,
+            "answer": answer,
+            "clicks": answer,
+            "submit": submit_ok,
+            "question": question,
+            "yescaptcha": api_result,
+        }
+        actions.append(action)
+        write_json(out / "yescaptcha_actions_latest.json", actions)
+        if args.debug_screenshots:
+            v4.base.screenshot(
+                solver_tab,
+                out / "solver_screenshots" / f"wave_{wave:02d}_after_submit.png",
+            )
+        if not submit_ok:
+            state = v4.base.captcha_state(solver_tab)
+            return {
+                "ok": False,
+                "error": f"submit button failed at wave={wave}, state={state}",
+                "actions": actions,
+            }
+        token = v4.v3.wait_token_quick(
+            solver_tab,
+            args.after_submit_token_wait,
+            f"wave{wave} post ",
+        )
+        if token:
+            return v4.v3.build_token_result(solver_tab, token, actions)
+
+    token = v4.v3.wait_token_quick(solver_tab, args.token_timeout, "final ")
+    if token:
+        return v4.v3.build_token_result(solver_tab, token, actions)
+    return {
+        "ok": False,
+        "error": f"max_waves exceeded ({args.max_waves}) without token",
+        "actions": actions,
+    }
+
+
 def _launch_solver_browser(
     args: argparse.Namespace,
     proxy: v4.ProxySettings,
@@ -275,7 +612,12 @@ def _launch_solver_browser(
 ) -> tuple[Any, Any, Optional[Any]]:
     if args.browser == "ruyipage":
         page = v4.launch_ruyi_browser(args, proxy, runtime_proxy_url)
-        catcher = v4.v3.RuyiArkoseImageCatcher(page, label=f"v5-{args.solver}")
+        catcher_type = (
+            V5RuyiYesCaptchaImageCatcher
+            if args.solver == "yescaptcha"
+            else v4.v3.RuyiArkoseImageCatcher
+        )
+        catcher = catcher_type(page, label=f"v5-{args.solver}")
         optimizer = v4.BrowserResourceOptimizer(
             page,
             Path(args.static_cache_dir),
@@ -399,13 +741,7 @@ def solve_with_browser(
             result = v4.run_v4_solver_tab(page, catcher, args, out)
             result_file = out / "local_v11_solver_result.json"
         else:
-            import register_ruyipage_v2 as v2
-
-            if args.browser == "cloakbrowser":
-                v2.CLICK_STYLE = "js"
-            else:
-                v2.CLICK_STYLE = args.click_style
-            result = v2.auto_solve_solver_tab(page, catcher, args, out)
+            result = auto_solve_yescaptcha_tab(page, catcher, args, out)
             result_file = out / "yescaptcha_solver_result.json"
         write_json(
             result_file,

@@ -374,6 +374,7 @@ jobs:
 
       - name: Run HTTP V5 registration
         env:
+          V5_SOLVER: ${{ inputs.solver }}
           RANK_V11_URL: http://127.0.0.1:8765
           YESCAPTCHA_API_KEY: ${{ secrets.YESCAPTCHA_API_KEY || inputs.yescaptcha_key }}
           CAPMONSTER_API_KEY: ${{ secrets.CAPMONSTER_API_KEY || inputs.capmonster_key }}
@@ -382,6 +383,17 @@ jobs:
         run: |
           set +e
           mkdir -p "$V5_STATIC_CACHE_DIR"
+          solver_click_args=(
+            --click-style balanced
+            --verify-timeout 35
+            --first-image-timeout 45
+          )
+          if [ "$V5_SOLVER" = "yescaptcha" ]; then
+            solver_click_args+=(
+              --click-interval-min-ms 250
+              --click-interval-max-ms 600
+            )
+          fi
           last_rc=1
           for attempt in 1 2 3; do
             echo "::group::V5 registration attempt ${attempt}/3"
@@ -392,7 +404,7 @@ jobs:
                 --proxy "$REGISTRATION_PROXY" \
                 --country-probe \
                 --headless \
-                --click-style balanced \
+                "${solver_click_args[@]}" \
                 --static-cache-dir "$V5_STATIC_CACHE_DIR" \
                 --rank-v11-url "$RANK_V11_URL"
             last_rc=$?

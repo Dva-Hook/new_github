@@ -1,0 +1,479 @@
+name: Battle.net auto register (HTTP V5 selectable solver/browser/network)
+
+on:
+  workflow_dispatch:
+    inputs:
+      count:
+        description: "number of registration jobs (1-256)"
+        required: true
+        default: "1"
+        type: string
+      max_parallel:
+        description: "maximum concurrent jobs (1-20)"
+        required: true
+        default: "10"
+        type: string
+      solver:
+        description: "captcha solver"
+        required: true
+        default: "v11"
+        type: choice
+        options:
+          - v11
+          - yescaptcha
+          - capmonster
+      browser:
+        description: "Arkose browser adapter"
+        required: true
+        default: "ruyipage"
+        type: choice
+        options:
+          - ruyipage
+          - cloakbrowser
+      network:
+        description: "registration network route"
+        required: true
+        default: "direct"
+        type: choice
+        options:
+          - direct
+          - proxy
+      proxy_file:
+        description: "repository proxy pool path (used only for proxy mode)"
+        required: true
+        default: "IP.txt"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      indices: ${{ steps.matrix.outputs.indices }}
+      max_parallel: ${{ steps.matrix.outputs.max_parallel }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Validate inputs, proxy pool, and generate matrix
+        id: matrix
+        env:
+          REQUESTED_COUNT: ${{ inputs.count }}
+          REQUESTED_MAX_PARALLEL: ${{ inputs.max_parallel }}
+          NETWORK_MODE: ${{ inputs.network }}
+          PROXY_FILE: ${{ inputs.proxy_file }}
+          SOLVER_MODE: ${{ inputs.solver }}
+          BROWSER_MODE: ${{ inputs.browser }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          from v5_proxy_pool import load_proxy_pool
+
+          def bounded_int(name, raw, upper):
+              try:
+                  value = int(raw)
+              except (TypeError, ValueError):
+                  raise SystemExit(f"{name} must be an integer, got {raw!r}")
+              if not 1 <= value <= upper:
+                  raise SystemExit(f"{name} must be in 1..{upper}, got {value}")
+              return value
+
+          count = bounded_int("count", os.environ["REQUESTED_COUNT"], 256)
+          requested_parallel = bounded_int(
+              "max_parallel", os.environ["REQUESTED_MAX_PARALLEL"], 20
+          )
+          max_parallel = min(requested_parallel, count, 20)
+          network = os.environ["NETWORK_MODE"].strip().lower()
+          if network not in {"direct", "proxy"}:
+              raise SystemExit(f"unsupported network mode: {network}")
+          if network == "proxy":
+              root = Path.cwd().resolve()
+              proxy_path = (root / os.environ["PROXY_FILE"]).resolve()
+              if root not in proxy_path.parents:
+                  raise SystemExit("proxy_file must stay inside the repository")
+              if not proxy_path.is_file():
+                  raise SystemExit(f"proxy file not found: {proxy_path}")
+              records = load_proxy_pool(proxy_path)
+              if len(records) < count:
+                  raise SystemExit(
+                      f"proxy pool has {len(records)} entries, but {count} jobs were requested"
+                  )
+              print(f"proxy pool valid: count={len(records)}, required={count}")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as fp:
+              fp.write(f"indices={json.dumps(list(range(1, count + 1)))}\n")
+              fp.write(f"max_parallel={max_parallel}\n")
+          print(
+              f"matrix size={count} max_parallel={max_parallel} "
+              f"solver={os.environ['SOLVER_MODE']} "
+              f"browser={os.environ['BROWSER_MODE']} network={network}"
+          )
+          PY
+
+  deps-cache:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Cache V5 virtualenv
+        id: venv
+        uses: actions/cache@v5
+        with:
+          path: .venv
+          key: v5-${{ inputs.solver }}-${{ inputs.browser }}-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage-v5.txt', 'requirements-ruyipage-v4.txt', 'rank_v11/requirements.txt') }}
+
+      - name: Build V5 virtualenv
+        if: steps.venv.outputs.cache-hit != 'true'
+        env:
+          V5_SOLVER: ${{ inputs.solver }}
+          V5_BROWSER: ${{ inputs.browser }}
+        run: |
+          set -euo pipefail
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/pip install -r requirements-ruyipage-v5.txt
+          if [ "$V5_SOLVER" = "v11" ]; then
+            .venv/bin/pip install torch torchvision \
+              --index-url https://download.pytorch.org/whl/cpu
+          fi
+          if [ "$V5_BROWSER" = "cloakbrowser" ]; then
+            .venv/bin/pip install "cloakbrowser>=0.4.10"
+          fi
+
+      - name: Validate selected dependencies
+        env:
+          V5_SOLVER: ${{ inputs.solver }}
+          V5_BROWSER: ${{ inputs.browser }}
+        run: |
+          .venv/bin/python - <<'PY'
+          import importlib.util
+          import os
+
+          required = [
+              "ruyipage", "curl_cffi", "bs4", "websocket", "requests",
+              "PIL", "numpy", "cv2",
+          ]
+          if os.environ["V5_SOLVER"] == "v11":
+              required.extend(["torch", "torchvision"])
+          if os.environ["V5_BROWSER"] == "cloakbrowser":
+              required.append("cloakbrowser")
+          missing = [name for name in required if importlib.util.find_spec(name) is None]
+          if missing:
+              raise SystemExit(f"missing modules: {missing}")
+          import register_ruyipage_v5
+          print("V5 dependency check OK")
+          PY
+
+      - name: Cache RuyiPage Firefox runtime
+        id: ruyi-runtime
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ruyipage
+          key: ruyipage-firefox-${{ runner.os }}-v1
+
+      - name: Install RuyiPage Firefox runtime
+        if: steps.ruyi-runtime.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          .venv/bin/python -m ruyipage install
+          .venv/bin/python -m ruyipage doctor
+
+      - name: Cache CloakBrowser Chromium runtime
+        if: inputs.browser == 'cloakbrowser'
+        id: cloak-runtime
+        uses: actions/cache@v5
+        with:
+          path: ~/.cloakbrowser
+          key: cloakbrowser-chromium-${{ runner.os }}-v1
+
+      - name: Install CloakBrowser Chromium runtime
+        if: inputs.browser == 'cloakbrowser' && steps.cloak-runtime.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          .venv/bin/python - <<'PY'
+          import cloakbrowser
+          cloakbrowser.ensure_binary()
+          info = cloakbrowser.binary_info()
+          if not info.get("installed"):
+              raise SystemExit(f"CloakBrowser binary unavailable: {info}")
+          print(f"CloakBrowser ready: version={info.get('version')}")
+          PY
+
+  register:
+    needs: [prepare, deps-cache]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(needs.prepare.outputs.max_parallel) }}
+      matrix:
+        index: ${{ fromJSON(needs.prepare.outputs.indices) }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Restore V5 virtualenv
+        id: venv
+        uses: actions/cache@v5
+        with:
+          path: .venv
+          key: v5-${{ inputs.solver }}-${{ inputs.browser }}-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage-v5.txt', 'requirements-ruyipage-v4.txt', 'rank_v11/requirements.txt') }}
+
+      - name: Restore RuyiPage Firefox runtime
+        id: ruyi-runtime
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ruyipage
+          key: ruyipage-firefox-${{ runner.os }}-v1
+
+      - name: Restore CloakBrowser Chromium runtime
+        if: inputs.browser == 'cloakbrowser'
+        id: cloak-runtime
+        uses: actions/cache@v5
+        with:
+          path: ~/.cloakbrowser
+          key: cloakbrowser-chromium-${{ runner.os }}-v1
+
+      - name: Restore V5 public static cache
+        id: public-static-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: .cache/v5_public_static
+          key: http-v5-public-static-v1-${{ github.run_id }}
+          restore-keys: |
+            http-v5-public-static-v1-
+
+      - name: Repair missing cached dependencies
+        if: steps.venv.outputs.cache-hit != 'true' || steps.ruyi-runtime.outputs.cache-hit != 'true' || (inputs.browser == 'cloakbrowser' && steps.cloak-runtime.outputs.cache-hit != 'true')
+        env:
+          V5_SOLVER: ${{ inputs.solver }}
+          V5_BROWSER: ${{ inputs.browser }}
+        run: |
+          set -euo pipefail
+          if [ ! -x .venv/bin/python ]; then
+            python -m venv .venv
+            .venv/bin/python -m pip install --upgrade pip
+            .venv/bin/pip install -r requirements-ruyipage-v5.txt
+            if [ "$V5_SOLVER" = "v11" ]; then
+              .venv/bin/pip install torch torchvision \
+                --index-url https://download.pytorch.org/whl/cpu
+            fi
+            if [ "$V5_BROWSER" = "cloakbrowser" ]; then
+              .venv/bin/pip install "cloakbrowser>=0.4.10"
+            fi
+          fi
+          if ! .venv/bin/python -m ruyipage doctor >/dev/null 2>&1; then
+            .venv/bin/python -m ruyipage install
+            .venv/bin/python -m ruyipage doctor
+          fi
+          if [ "$V5_BROWSER" = "cloakbrowser" ]; then
+            .venv/bin/python -c "import cloakbrowser; cloakbrowser.ensure_binary()"
+          fi
+
+      - name: Ensure Xvfb is available
+        run: |
+          if ! command -v xvfb-run >/dev/null 2>&1 || ! command -v xauth >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq xvfb xauth
+          fi
+
+      - name: Allocate network route
+        env:
+          NETWORK_MODE: ${{ inputs.network }}
+          PROXY_FILE: ${{ inputs.proxy_file }}
+          JOB_INDEX: ${{ matrix.index }}
+        run: |
+          set -euo pipefail
+          if [ "$NETWORK_MODE" = "proxy" ]; then
+            .venv/bin/python v5_proxy_pool.py \
+              --file "$PROXY_FILE" \
+              --index "$JOB_INDEX" \
+              --github-env
+          else
+            echo "REGISTRATION_PROXY=" >> "$GITHUB_ENV"
+            echo "Network route: direct"
+          fi
+
+      - name: Start persistent local V11 service
+        if: inputs.solver == 'v11'
+        env:
+          RANK_V11_CACHE_DIR: ${{ runner.temp }}/rank_v11_cache_${{ matrix.index }}
+        run: |
+          set -euo pipefail
+          nohup .venv/bin/python rank_v11/server.py \
+            --host 127.0.0.1 \
+            --port 8765 \
+            --device cpu \
+            --cpu-threads 2 \
+            --mode accurate \
+            --cache-dir "$RANK_V11_CACHE_DIR" \
+            > rank_v11_server.log 2>&1 &
+          echo $! > rank_v11_server.pid
+
+      - name: Run HTTP V5 registration
+        env:
+          RANK_V11_URL: http://127.0.0.1:8765
+          YESCAPTCHA_API_KEY: ${{ secrets.YESCAPTCHA_API_KEY }}
+          CAPMONSTER_API_KEY: ${{ secrets.CAPMONSTER_API_KEY }}
+          V5_STATIC_CACHE_DIR: ${{ github.workspace }}/.cache/v5_public_static
+          PYTHONUNBUFFERED: "1"
+        run: |
+          set +e
+          mkdir -p "$V5_STATIC_CACHE_DIR"
+          last_rc=1
+          for attempt in 1 2 3; do
+            echo "::group::V5 registration attempt ${attempt}/3"
+            xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+              .venv/bin/python register_ruyipage_v5.py \
+                --solver "${{ inputs.solver }}" \
+                --browser "${{ inputs.browser }}" \
+                --proxy "$REGISTRATION_PROXY" \
+                --country-probe \
+                --headless \
+                --click-style balanced \
+                --static-cache-dir "$V5_STATIC_CACHE_DIR" \
+                --rank-v11-url "$RANK_V11_URL"
+            last_rc=$?
+            echo "V5 attempt ${attempt}/3 exited with ${last_rc}"
+            echo "::endgroup::"
+            if [ "$last_rc" -eq 0 ]; then
+              exit 0
+            fi
+            if [ "$last_rc" -eq 42 ]; then
+              echo "Unsupported Arkose classification; stop without retry"
+              exit 42
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              sleep $((attempt * 3))
+            fi
+          done
+          exit "$last_rc"
+
+      - name: Save refreshed V5 public static cache
+        if: always() && matrix.index == 1
+        uses: actions/cache/save@v5
+        with:
+          path: .cache/v5_public_static
+          key: http-v5-public-static-v1-${{ github.run_id }}
+
+      - name: Stop local V11 service
+        if: always() && inputs.solver == 'v11'
+        run: |
+          if [ -f rank_v11_server.pid ]; then
+            kill "$(cat rank_v11_server.pid)" 2>/dev/null || true
+          fi
+
+      - name: Export successful account
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("ruyipage_http_v5_register/runs")
+          records = []
+          seen = set()
+          for account_path in sorted(root.glob("run_*/account_generated.json")):
+              run_dir = account_path.parent
+              result_path = run_dir / "registration_result.json"
+              if not result_path.is_file():
+                  continue
+              result = json.loads(result_path.read_text(encoding="utf-8"))
+              if not result.get("ok"):
+                  continue
+              account = json.loads(account_path.read_text(encoding="utf-8"))
+              email = str(account.get("email") or "")
+              if not email or email.lower() in seen:
+                  continue
+              seen.add(email.lower())
+              outcome = result.get("outcome") or {}
+              records.append(
+                  "\n".join(
+                      [
+                          f"Account: {email}",
+                          f"Password: {account.get('password', '')}",
+                          f"BattleTag: {account.get('battle_tag', '')}",
+                          f"PlayerAccountId: {outcome.get('playerAccountId', '')}",
+                      ]
+                  )
+              )
+          if records:
+              Path("registered_account.txt").write_text(
+                  "\n\n".join(records) + "\n", encoding="utf-8"
+              )
+          print(f"Recovered {len(records)} successful account(s)")
+          PY
+
+      - name: Upload V5 run data
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: http-v5-${{ inputs.solver }}-${{ inputs.browser }}-reg-data-${{ matrix.index }}
+          path: |
+            rank_v11_server.log
+            ruyipage_http_v5_register/runs/**
+          if-no-files-found: ignore
+          compression-level: 6
+
+      - name: Upload V5 account data
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: http-v5-reg-accounts-${{ matrix.index }}
+          path: registered_account.txt
+          if-no-files-found: ignore
+          compression-level: 9
+
+  collect:
+    needs: register
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all V5 account artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v7
+        with:
+          pattern: http-v5-reg-accounts-*
+          path: all_accounts
+          merge-multiple: false
+
+      - name: Merge account files
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          files = sorted(Path("all_accounts").glob("**/registered_account.txt"))
+          chunks = [path.read_text(encoding="utf-8").strip() for path in files]
+          output = "\n\n".join(chunk for chunk in chunks if chunk).strip()
+          Path("all_accounts.txt").write_text(
+              (output + "\n") if output else "(no successful accounts)\n",
+              encoding="utf-8",
+          )
+          print(f"Merged {len(files)} account file(s)")
+          PY
+
+      - name: Upload merged V5 account data
+        uses: actions/upload-artifact@v6
+        with:
+          name: all-http-v5-registered-accounts
+          path: all_accounts.txt
+          if-no-files-found: error
+          compression-level: 9

@@ -22,6 +22,16 @@ on:
           - v11
           - yescaptcha
           - capmonster
+      yescaptcha_key:
+        description: "YesCaptcha API key (optional when YESCAPTCHA_API_KEY secret exists)"
+        required: false
+        default: ""
+        type: string
+      capmonster_key:
+        description: "CapMonster API key (optional when CAPMONSTER_API_KEY secret exists)"
+        required: false
+        default: ""
+        type: string
       browser:
         description: "Arkose browser adapter"
         required: true
@@ -66,6 +76,8 @@ jobs:
           PROXY_FILE: ${{ inputs.proxy_file }}
           SOLVER_MODE: ${{ inputs.solver }}
           BROWSER_MODE: ${{ inputs.browser }}
+          YESCAPTCHA_API_KEY: ${{ secrets.YESCAPTCHA_API_KEY || inputs.yescaptcha_key }}
+          CAPMONSTER_API_KEY: ${{ secrets.CAPMONSTER_API_KEY || inputs.capmonster_key }}
         run: |
           python3 - <<'PY'
           import json
@@ -88,6 +100,23 @@ jobs:
               "max_parallel", os.environ["REQUESTED_MAX_PARALLEL"], 20
           )
           max_parallel = min(requested_parallel, count, 20)
+          solver = os.environ["SOLVER_MODE"].strip().lower()
+          browser = os.environ["BROWSER_MODE"].strip().lower()
+          yescaptcha_key = os.environ.get("YESCAPTCHA_API_KEY", "").strip()
+          capmonster_key = os.environ.get("CAPMONSTER_API_KEY", "").strip()
+          for value in (yescaptcha_key, capmonster_key):
+              if value:
+                  print(f"::add-mask::{value}")
+          if solver == "yescaptcha" and not yescaptcha_key:
+              raise SystemExit(
+                  "yescaptcha requires the YESCAPTCHA_API_KEY repository secret "
+                  "or the yescaptcha_key workflow input"
+              )
+          if solver == "capmonster" and not capmonster_key:
+              raise SystemExit(
+                  "capmonster requires the CAPMONSTER_API_KEY repository secret "
+                  "or the capmonster_key workflow input"
+              )
           network = os.environ["NETWORK_MODE"].strip().lower()
           if network not in {"direct", "proxy"}:
               raise SystemExit(f"unsupported network mode: {network}")
@@ -109,8 +138,7 @@ jobs:
               fp.write(f"max_parallel={max_parallel}\n")
           print(
               f"matrix size={count} max_parallel={max_parallel} "
-              f"solver={os.environ['SOLVER_MODE']} "
-              f"browser={os.environ['BROWSER_MODE']} network={network}"
+              f"solver={solver} browser={browser} network={network}"
           )
           PY
 
@@ -312,6 +340,22 @@ jobs:
             echo "Network route: direct"
           fi
 
+      - name: Mask selected provider credential
+        if: inputs.solver == 'yescaptcha' || inputs.solver == 'capmonster'
+        env:
+          SOLVER_MODE: ${{ inputs.solver }}
+          YESCAPTCHA_API_KEY: ${{ secrets.YESCAPTCHA_API_KEY || inputs.yescaptcha_key }}
+          CAPMONSTER_API_KEY: ${{ secrets.CAPMONSTER_API_KEY || inputs.capmonster_key }}
+        run: |
+          set -euo pipefail
+          if [ "$SOLVER_MODE" = "yescaptcha" ]; then
+            provider_key="$YESCAPTCHA_API_KEY"
+          else
+            provider_key="$CAPMONSTER_API_KEY"
+          fi
+          test -n "$provider_key"
+          echo "::add-mask::$provider_key"
+
       - name: Start persistent local V11 service
         if: inputs.solver == 'v11'
         env:
@@ -331,8 +375,8 @@ jobs:
       - name: Run HTTP V5 registration
         env:
           RANK_V11_URL: http://127.0.0.1:8765
-          YESCAPTCHA_API_KEY: ${{ secrets.YESCAPTCHA_API_KEY }}
-          CAPMONSTER_API_KEY: ${{ secrets.CAPMONSTER_API_KEY }}
+          YESCAPTCHA_API_KEY: ${{ secrets.YESCAPTCHA_API_KEY || inputs.yescaptcha_key }}
+          CAPMONSTER_API_KEY: ${{ secrets.CAPMONSTER_API_KEY || inputs.capmonster_key }}
           V5_STATIC_CACHE_DIR: ${{ github.workspace }}/.cache/v5_public_static
           PYTHONUNBUFFERED: "1"
         run: |

@@ -11,6 +11,10 @@ registration network route.
 - `count`: `1..256`
 - `max_parallel`: `1..20`
 - `solver`: `v11`, `yescaptcha`, or `capmonster`
+- `yescaptcha_key`: optional manual key; the `YESCAPTCHA_API_KEY` repository
+  secret takes precedence
+- `capmonster_key`: optional manual key; the `CAPMONSTER_API_KEY` repository
+  secret takes precedence
 - `browser`: `ruyipage` or `cloakbrowser`
 - `network`: `direct` or `proxy`
 - `proxy_file`: repository-relative proxy pool path, default `IP.txt`
@@ -21,7 +25,9 @@ registration network route.
 - `CAPMONSTER_API_KEY` when `solver=capmonster`
 
 V11 does not require an API key. The workflow starts the local V11 service only
-for `solver=v11`.
+for `solver=v11`. For compatibility with the V2 workflow, either provider key
+can instead be entered in the matching workflow input. Provider credentials are
+validated before the registration matrix starts and are masked in every job.
 
 ## Proxy pool
 

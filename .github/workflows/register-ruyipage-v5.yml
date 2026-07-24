@@ -460,14 +460,11 @@ jobs:
               if not email or email.lower() in seen:
                   continue
               seen.add(email.lower())
-              outcome = result.get("outcome") or {}
               records.append(
                   "\n".join(
                       [
-                          f"Account: {email}",
-                          f"Password: {account.get('password', '')}",
-                          f"BattleTag: {account.get('battle_tag', '')}",
-                          f"PlayerAccountId: {outcome.get('playerAccountId', '')}",
+                          f"账号：{email}",
+                          f"密码：{account.get('password', '')}",
                       ]
                   )
               )

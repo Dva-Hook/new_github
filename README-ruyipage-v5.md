@@ -58,7 +58,11 @@ With `network=direct`, `IP.txt` is not read and the GitHub runner route is used.
   RuyiPage baseline of balanced native clicks with a random `250..600ms` gap
   between arrow clicks. CloakBrowser keeps its existing adapter click path.
 - `capmonster`: sends the HTTP-captured Arkose context to CapMonster and receives
-  the completed token directly. No solver browser is needed in this branch.
+  the completed token directly. With `network=proxy`, the same per-job proxy is
+  included in the CapMonster task; direct mode uses CapMonster's built-in proxy.
+  The protocol session and CapMonster task share the current Windows Chrome 150
+  user agent by default (`V5_USER_AGENT` or `--protocol-user-agent` overrides it).
+  No solver browser is needed in this branch.
 
 All branches submit the resulting token through the same persisted V4 HTTP
 session. Registration country remains fixed to `GBR`.

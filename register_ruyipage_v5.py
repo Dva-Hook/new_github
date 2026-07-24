@@ -16,6 +16,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Optional
+from urllib.parse import unquote, urlsplit
 
 import requests
 
@@ -37,6 +38,11 @@ REGISTRATION_COUNTRY = "GBR"
 DEFAULT_YESCAPTCHA_API_URL = "https://api.yescaptcha.com/createTask"
 DEFAULT_CAPMONSTER_CREATE_URL = "https://api.capmonster.cloud/createTask"
 DEFAULT_CAPMONSTER_RESULT_URL = "https://api.capmonster.cloud/getTaskResult"
+DEFAULT_WINDOWS_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/150.0.0.0 Safari/537.36"
+)
 
 
 def force_utf8_stdio() -> None:
@@ -79,6 +85,9 @@ def build_parser() -> argparse.ArgumentParser:
         static_cache_dir=os.environ.get(
             "V5_STATIC_CACHE_DIR",
             str(PROJECT_ROOT / ".cache" / "v5_public_static"),
+        ),
+        protocol_user_agent=os.environ.get(
+            "V5_USER_AGENT", DEFAULT_WINDOWS_USER_AGENT
         ),
     )
     parser.add_argument(
@@ -164,20 +173,47 @@ def _redacted_provider_response(value: Mapping[str, Any]) -> dict[str, Any]:
     return clean
 
 
+def _capmonster_proxy_fields(proxy: v4.ProxySettings) -> dict[str, Any]:
+    """Translate the selected V5 route into CapMonster FunCaptcha fields."""
+
+    if not proxy.enabled:
+        return {}
+    parsed = urlsplit(str(proxy.url or ""))
+    proxy_type = str(proxy.scheme or parsed.scheme or "http").lower()
+    if proxy_type == "socks5h":
+        proxy_type = "socks5"
+    if proxy_type not in {"http", "https", "socks4", "socks5"}:
+        raise ValueError(f"unsupported CapMonster proxy scheme: {proxy_type}")
+    address = str(proxy.host or parsed.hostname or "").strip()
+    port = int(proxy.port or parsed.port or 0)
+    if not address or not 1 <= port <= 65535:
+        raise ValueError("selected proxy has no valid address and port")
+
+    fields: dict[str, Any] = {
+        "proxyType": proxy_type,
+        "proxyAddress": address,
+        "proxyPort": port,
+    }
+    if parsed.username is not None:
+        fields["proxyLogin"] = unquote(parsed.username)
+        fields["proxyPassword"] = unquote(parsed.password or "")
+    return fields
+
+
 def solve_with_capmonster(
     context: Mapping[str, Any],
     args: argparse.Namespace,
     out: Path,
+    proxy: v4.ProxySettings,
 ) -> dict[str, Any]:
     blob = str(context.get("blob") or "")
     site_key = str(context.get("siteKey") or v4.DEFAULT_SITE_KEY)
     surl = str(context.get("surl") or v4.DEFAULT_SURL)
     website_url = str(context.get("websiteURL") or args.entry_url)
     user_agent = str(
-        context.get("userAgent")
-        or args.protocol_user_agent
-        or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+        args.protocol_user_agent
+        or context.get("userAgent")
+        or DEFAULT_WINDOWS_USER_AGENT
     )
     task: dict[str, Any] = {
         "type": "FunCaptchaTask",
@@ -189,6 +225,11 @@ def solve_with_capmonster(
         task["data"] = json.dumps({"blob": blob}, separators=(",", ":"))
     if surl and surl != "client-api.arkoselabs.com":
         task["funcaptchaApiJSSubdomain"] = surl
+    task.update(_capmonster_proxy_fields(proxy))
+    LOG.info(
+        "CapMonster worker route: %s",
+        proxy.display if proxy.enabled else "provider built-in proxy",
+    )
 
     session = requests.Session()
     session.headers.update({"Content-Type": "application/json"})
@@ -921,7 +962,7 @@ def main() -> int:
             }
         elif args.solver == "capmonster":
             health = {"ok": True, "status": "external-provider"}
-            solve_result = solve_with_capmonster(arkose, args, out)
+            solve_result = solve_with_capmonster(arkose, args, out, proxy)
             token = str(solve_result["token"])
         else:
             if args.solver == "v11":

@@ -13,7 +13,7 @@ import random
 import sys
 import time
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional
 from urllib.parse import unquote, urlsplit
@@ -29,6 +29,8 @@ from v5_cloak_adapter import (
     CloakArkoseImageCatcher,
     launch_cloak_page,
 )
+from v5_email_pool import EmailCredential, select_email_credential
+from v5_email_verifier import EmailVerificationResult, verify_registered_email
 
 
 LOG = logging.getLogger("http_register_v5")
@@ -106,6 +108,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="ISO 3166-1 alpha-3 registration country code (default: USA)",
     )
     parser.add_argument(
+        "--email-source",
+        choices=("generated", "pool"),
+        default=os.environ.get("V5_EMAIL_SOURCE", "generated").lower(),
+        help="generated or one deterministic row from Email_registing.txt",
+    )
+    parser.add_argument(
+        "--email-pool-file",
+        default=os.environ.get("V5_EMAIL_POOL_FILE", "Email_registing.txt"),
+    )
+    parser.add_argument(
+        "--email-pool-index",
+        type=int,
+        default=int(os.environ.get("V5_EMAIL_POOL_INDEX", "0") or 0),
+    )
+    parser.add_argument("--email-login-timeout", type=float, default=60.0)
+    parser.add_argument("--email-mail-timeout", type=float, default=120.0)
+    parser.add_argument("--email-verification-timeout", type=float, default=20.0)
+    parser.add_argument(
         "--yescaptcha-key",
         default=os.environ.get("YESCAPTCHA_API_KEY", ""),
     )
@@ -138,25 +158,37 @@ def validate_configuration(args: argparse.Namespace) -> dict[str, Any]:
     registration_country = str(args.country or "").strip().upper()
     if len(registration_country) != 3 or not registration_country.isalpha():
         raise ValueError(
-            "--country must be a three-letter ISO country code, "
-            f"got {args.country!r}"
+            "--country 必须是三字母 ISO 国家代码，"
+            f"当前值为 {args.country!r}"
         )
     if args.solver == "yescaptcha" and not str(args.yescaptcha_key).strip():
         raise ValueError(
-            "YESCAPTCHA_API_KEY is required when --solver yescaptcha is selected"
+            "选择 YesCaptcha 求解时必须提供 YESCAPTCHA_API_KEY"
         )
     if args.solver == "capmonster" and not str(args.capmonster_key).strip():
         raise ValueError(
-            "CAPMONSTER_API_KEY is required when --solver capmonster is selected"
+            "选择 CapMonster 求解时必须提供 CAPMONSTER_API_KEY"
         )
     if args.capmonster_poll_interval <= 0 or args.capmonster_timeout <= 0:
-        raise ValueError("CapMonster polling values must be positive")
+        raise ValueError("CapMonster 轮询间隔和超时时间必须为正数")
     if args.yescaptcha_timeout <= 0:
-        raise ValueError("YesCaptcha timeout must be positive")
+        raise ValueError("YesCaptcha 超时时间必须为正数")
+    if args.email_source == "pool" and int(args.email_pool_index) < 1:
+        raise ValueError("邮箱池模式下 --email-pool-index 必须大于等于 1")
+    if min(
+        float(args.email_login_timeout),
+        float(args.email_mail_timeout),
+        float(args.email_verification_timeout),
+    ) <= 0:
+        raise ValueError("邮箱验证的各项超时时间必须为正数")
     return {
         "solver": args.solver,
         "browser": args.browser,
         "registrationCountry": registration_country,
+        "emailSource": args.email_source,
+        "emailPoolIndex": (
+            int(args.email_pool_index) if args.email_source == "pool" else None
+        ),
         "browserRequired": args.solver in {"v11", "yescaptcha"},
         "apiKeyConfigured": (
             True
@@ -195,11 +227,11 @@ def _capmonster_proxy_fields(proxy: v4.ProxySettings) -> dict[str, Any]:
     if proxy_type == "socks5h":
         proxy_type = "socks5"
     if proxy_type not in {"http", "https", "socks4", "socks5"}:
-        raise ValueError(f"unsupported CapMonster proxy scheme: {proxy_type}")
+        raise ValueError(f"CapMonster 不支持此代理协议: {proxy_type}")
     address = str(proxy.host or parsed.hostname or "").strip()
     port = int(proxy.port or parsed.port or 0)
     if not address or not 1 <= port <= 65535:
-        raise ValueError("selected proxy has no valid address and port")
+        raise ValueError("所选代理没有有效的地址和端口")
 
     fields: dict[str, Any] = {
         "proxyType": proxy_type,
@@ -239,8 +271,8 @@ def solve_with_capmonster(
         task["funcaptchaApiJSSubdomain"] = surl
     task.update(_capmonster_proxy_fields(proxy))
     LOG.info(
-        "CapMonster worker route: %s",
-        proxy.display if proxy.enabled else "provider built-in proxy",
+        "CapMonster 工作节点线路: %s",
+        proxy.display if proxy.enabled else "服务商内置代理",
     )
 
     session = requests.Session()
@@ -256,10 +288,10 @@ def solve_with_capmonster(
     task_id = created.get("taskId")
     if not task_id or int(created.get("errorId") or 0):
         raise RuntimeError(
-            f"CapMonster createTask failed: errorCode={created.get('errorCode')} "
+            f"CapMonster 创建任务失败: errorCode={created.get('errorCode')} "
             f"errorDescription={created.get('errorDescription')}"
         )
-    LOG.info("CapMonster task created: taskId=%s blobLength=%s", task_id, len(blob))
+    LOG.info("CapMonster 任务已创建: taskId=%s blobLength=%s", task_id, len(blob))
 
     deadline = time.monotonic() + float(args.capmonster_timeout)
     polls = 0
@@ -281,7 +313,7 @@ def solve_with_capmonster(
                 _redacted_provider_response(last),
             )
             if not token:
-                raise RuntimeError("CapMonster returned ready without solution.token")
+                raise RuntimeError("CapMonster 已返回 ready，但缺少 solution.token")
             return {
                 "ok": True,
                 "token": token,
@@ -366,7 +398,7 @@ class V5RuyiYesCaptchaImageCatcher(v4.v3.RuyiArkoseImageCatcher):
                     if not valid_rtig and not valid_generic:
                         seen.add(sha)
                         LOG.info(
-                            "[%s] ignore non-challenge image size=%sx%s url=%s",
+                            "[%s] 忽略非题目图片 size=%sx%s url=%s",
                             self.label,
                             width,
                             height,
@@ -461,7 +493,7 @@ def wait_image_or_token_fast(
 
 def click_next_n_v4(page: Any, count: int, args: argparse.Namespace) -> bool:
     count = max(0, int(count))
-    LOG.info("Click the next-image arrow %s times", count)
+    LOG.info("点击下一张箭头 %s 次", count)
     minimum = max(0, int(args.click_interval_min_ms))
     maximum = max(minimum, int(args.click_interval_max_ms))
     for index in range(count):
@@ -473,7 +505,7 @@ def click_next_n_v4(page: Any, count: int, args: argparse.Namespace) -> bool:
             after = v4.v3.wait_index_change(page, before)
             if before < 0 or after != before:
                 LOG.info(
-                    "Next click %s/%s ok: before=%s after=%s",
+                    "第 %s/%s 次点击成功: before=%s after=%s",
                     index + 1,
                     count,
                     before,
@@ -482,7 +514,7 @@ def click_next_n_v4(page: Any, count: int, args: argparse.Namespace) -> bool:
                 clicked = True
                 break
             LOG.warning(
-                "Next click %s/%s may have been ignored: retry=%s "
+                "第 %s/%s 次点击可能未生效: retry=%s "
                 "before=%s after=%s",
                 index + 1,
                 count,
@@ -494,7 +526,7 @@ def click_next_n_v4(page: Any, count: int, args: argparse.Namespace) -> bool:
             return False
         if index + 1 < count:
             delay = random.randint(minimum, maximum) / 1000.0
-            LOG.info("Waiting %sms before the next arrow click", round(delay * 1000))
+            LOG.info("等待 %sms 后点击下一张箭头", round(delay * 1000))
             time.sleep(delay)
     return True
 
@@ -509,7 +541,7 @@ def auto_solve_yescaptcha_tab(
 
     api_key = str(args.yescaptcha_key or "").strip()
     if not api_key:
-        raise RuntimeError("YesCaptcha API key is empty")
+        raise RuntimeError("YesCaptcha API 密钥为空")
     images_dir = out / "yescaptcha_images"
     actions: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -522,7 +554,7 @@ def auto_solve_yescaptcha_tab(
         catcher,
         args.verify_timeout,
     ):
-        LOG.warning("No challenge image confirmed after Verify; keep waiting")
+        LOG.warning("点击验证后尚未确认题目图片，继续等待")
 
     for wave in range(args.max_waves):
         token = v4.v3.wait_token_quick(solver_tab, 1.0, f"wave{wave} pre ")
@@ -595,7 +627,7 @@ def auto_solve_yescaptcha_tab(
                 str(item) for item in (api_result.get("reasons") or [])
             ) or "unknown"
             LOG.info(
-                "YesCaptcha same-image recovery wave=%s retries=%s "
+                "YesCaptcha 同图恢复 wave=%s retries=%s "
                 "reasons=%s reencoded=%s",
                 wave,
                 retries,
@@ -603,7 +635,7 @@ def auto_solve_yescaptcha_tab(
                 bool(api_result.get("imageReencoded")),
             )
         LOG.info(
-            "YesCaptcha answer=%s wave=%s question=%r",
+            "YesCaptcha 答案=%s wave=%s question=%r",
             answer,
             wave,
             question["prompt"],
@@ -731,7 +763,7 @@ def _recover_missing_blob(
             v4.base.click_arkose_verify(recovery_page, timeout=12)
             blob = catcher.wait_for_blob(timeout=args.blob_timeout)
         if not blob:
-            raise RuntimeError("CloakBrowser fallback did not recover an Arkose blob")
+            raise RuntimeError("CloakBrowser 恢复流程未取得 Arkose blob")
         detected = v4.base.detect_arkose_context(recovery_page, catcher)
         return {
             "blob": blob,
@@ -758,7 +790,7 @@ def solve_with_browser(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     current = dict(context)
     if not current.get("blob"):
-        LOG.info("HTTP response had no blob; using the V4 cookie-import recovery")
+        LOG.info("HTTP 响应没有 blob，启用 V4 Cookie 导入恢复流程")
         current = _recover_missing_blob(
             client, args, proxy, out, runtime_proxy_url
         )
@@ -838,6 +870,14 @@ def resolve_resume_path(value: str) -> Path:
 def main() -> int:
     force_utf8_stdio()
     args = build_parser().parse_args()
+    email_credential: Optional[EmailCredential] = None
+    if args.email_source == "pool":
+        email_credential = select_email_credential(
+            args.email_pool_file, args.email_pool_index
+        )
+        if args.email and str(args.email).strip().casefold() != email_credential.email.casefold():
+            raise ValueError("--email 与邮箱池分配结果不一致")
+        args.email = email_credential.email
     v4.configure_v3_clicks(args)
     config = validate_configuration(args)
     registration_country = str(config["registrationCountry"])
@@ -858,6 +898,7 @@ def main() -> int:
     traffic_meter: Optional[ProxyTrafficMeter] = None
     traffic_snapshots: dict[str, dict[str, Any]] = {}
     runtime_proxy_url: Optional[str] = None
+    registration_started_at = datetime.now(timezone.utc)
     started = time.perf_counter()
     try:
         proxy = v4.parse_proxy(args.proxy)
@@ -875,9 +916,15 @@ def main() -> int:
                 for key, value in dict(state.data.get("identity") or {}).items()
             }
             if not all(identity.get(key) for key in ("email", "password", "battle_tag")):
-                raise RuntimeError("resume state has no complete account identity")
+                raise RuntimeError("恢复状态中没有完整账号信息")
+            if (
+                email_credential is not None
+                and identity.get("email", "").casefold()
+                != email_credential.email.casefold()
+            ):
+                raise RuntimeError("恢复状态中的邮箱与邮箱池分配结果不一致")
             LOG.info(
-                "Resuming persistent state: %s status=%s",
+                "恢复持久状态: %s status=%s",
                 resume_path,
                 state.data.get("status"),
             )
@@ -891,6 +938,12 @@ def main() -> int:
                     "solver": args.solver,
                     "browser": args.browser,
                     "registrationCountry": registration_country,
+                    "emailSource": args.email_source,
+                    "emailCredential": (
+                        email_credential.public_summary()
+                        if email_credential is not None
+                        else None
+                    ),
                     "countryProbe": bool(args.country_probe),
                     "proxy": proxy.summary(),
                     "proxyTrafficMeter": bool(proxy.enabled),
@@ -905,22 +958,22 @@ def main() -> int:
             )
         write_json(out / "account_generated.json", identity)
         write_json(out / "v5_configuration.json", config)
-        LOG.info("Output directory: %s", out)
+        LOG.info("输出目录: %s", out)
         LOG.info(
-            "Flow: persistent HTTP -> %s/%s -> HTTP captcha-gate",
+            "流程: 持久 HTTP -> %s/%s -> HTTP captcha-gate",
             args.browser,
             args.solver,
         )
-        LOG.info("Registration country: %s", registration_country)
-        LOG.info("Proxy route: %s auth=%s", proxy.display, proxy.has_auth)
-        LOG.info("Account: %s", identity["email"])
-        LOG.info("BattleTag: %s", identity["battle_tag"])
+        LOG.info("注册国家: %s", registration_country)
+        LOG.info("代理线路: %s auth=%s", proxy.display, proxy.has_auth)
+        LOG.info("账号: %s", identity["email"])
+        LOG.info("战网昵称: %s", identity["battle_tag"])
 
         if state.data.get("status") == "complete":
-            LOG.info("Persistent state is already complete")
-            print(f"Account: {identity['email']}")
-            print(f"Password: {identity['password']}")
-            print(f"BattleTag: {identity.get('battle_tag', '')}")
+            LOG.info("持久状态已经完成")
+            print(f"账号：{identity['email']}")
+            print(f"密码：{identity['password']}")
+            print(f"战网昵称：{identity.get('battle_tag', '')}")
             return 0
 
         runtime_proxy_url = proxy.url
@@ -928,7 +981,7 @@ def main() -> int:
             traffic_meter = ProxyTrafficMeter(proxy.url)
             runtime_proxy_url = traffic_meter.start()
             LOG.info(
-                "Proxy traffic meter started: local=%s upstream=%s",
+                "代理流量计已启动: local=%s upstream=%s",
                 runtime_proxy_url,
                 proxy.display,
             )
@@ -952,7 +1005,7 @@ def main() -> int:
                 opt_in=False,
                 country_probe=bool(args.country_probe),
             )
-        LOG.info("Persistent HTTP flow reached captcha-gate")
+        LOG.info("持久 HTTP 流程已到达 captcha-gate")
         arkose = dict(state.data.get("arkose") or {})
         if not arkose.get("blob"):
             arkose = client.recover_arkose_from_last_response()
@@ -960,7 +1013,7 @@ def main() -> int:
             traffic_meter
         )
         LOG.info(
-            "Arkose context: source=%s siteKey=%s blobLength=%s",
+            "Arkose 上下文: source=%s siteKey=%s blobLength=%s",
             arkose.get("source"),
             arkose.get("siteKey"),
             len(str(arkose.get("blob") or "")),
@@ -991,7 +1044,7 @@ def main() -> int:
                 )
                 write_json(out / "rank_v11_health.json", health)
                 LOG.info(
-                    "Local V11 ready: device=%s load=%.3fs warmup=%.3fs",
+                    "本地 V11 已就绪: device=%s load=%.3fs warmup=%.3fs",
                     health.get("device"),
                     float(health.get("model_load_seconds") or 0.0),
                     float(health.get("warmup_seconds") or 0.0),
@@ -1017,17 +1070,43 @@ def main() -> int:
                 "tokenLength": len(token),
             },
         )
-        LOG.info("Solver returned Arkose token, length=%s", len(token))
+        LOG.info("求解器已返回 Arkose token，长度=%s", len(token))
         traffic_snapshots["tokenReady"] = v4.capture_proxy_traffic_snapshot(
             traffic_meter
         )
 
         outcome = client.submit_captcha(token)
         success = outcome.get("status") == "success" and bool(outcome.get("success"))
+        email_verification = EmailVerificationResult(
+            ok=False,
+            status="not_requested",
+            note="",
+        )
+        if success and email_credential is not None:
+            email_verification = verify_registered_email(
+                email_credential,
+                identity["password"],
+                args=args,
+                proxy=proxy,
+                runtime_proxy_url=runtime_proxy_url,
+                output_dir=out,
+                not_before=registration_started_at,
+            )
+            write_json(out / "email_verification.json", email_verification.to_dict())
+            if email_verification.ok:
+                LOG.info("注册邮箱验证完成: %s", identity["email"])
+            else:
+                LOG.warning(
+                    "注册邮箱验证未完成: %s；%s",
+                    identity["email"],
+                    email_verification.note,
+                )
         registration = {
             "ok": success,
             "email": identity["email"],
             "battleTag": identity["battle_tag"],
+            "emailSource": args.email_source,
+            "emailVerification": email_verification.to_dict(),
             "successSource": "persistent-http-captcha-gate" if success else None,
             "outcome": outcome,
         }
@@ -1041,6 +1120,7 @@ def main() -> int:
                 "solver": args.solver,
                 "browser": args.browser,
                 "registrationCountry": registration_country,
+                "emailSource": args.email_source,
                 "countryProbe": bool(args.country_probe),
                 "proxy": proxy.summary(),
                 "arkose": v4.public_arkose_context(arkose),
@@ -1053,19 +1133,21 @@ def main() -> int:
         )
         if not success:
             LOG.error(
-                "captcha-gate did not confirm success: status=%s sample=%r",
+                "captcha-gate 未确认注册成功: status=%s sample=%r",
                 outcome.get("status"),
                 outcome.get("sample"),
             )
             return 1
 
-        LOG.info("Registration succeeded through the persisted HTTP session")
-        print(f"Account: {identity['email']}")
-        print(f"Password: {identity['password']}")
-        print(f"BattleTag: {identity['battle_tag']}")
+        LOG.info("已通过持久 HTTP 会话完成注册")
+        print(f"账号：{identity['email']}")
+        print(f"密码：{identity['password']}")
+        print(f"战网昵称：{identity['battle_tag']}")
+        if email_credential is not None and email_verification.note:
+            print(f"说明：{email_verification.note}")
         return 0
     except KeyboardInterrupt:
-        LOG.warning("Interrupted")
+        LOG.warning("运行已中断")
         write_json(
             out / "summary.json",
             {"ok": False, "error": "KeyboardInterrupt", "outputDir": str(out)},
@@ -1078,7 +1160,7 @@ def main() -> int:
         safe_traceback = v4.redact_proxy_text(
             traceback.format_exc(), proxy, args.proxy
         )
-        LOG.error("Run failed: %s\n%s", error_text, safe_traceback)
+        LOG.error("运行失败: %s\n%s", error_text, safe_traceback)
         if state is not None:
             with contextlib.suppress(Exception):
                 state.checkpoint(
@@ -1093,6 +1175,7 @@ def main() -> int:
             "solver": args.solver,
             "browser": args.browser,
             "registrationCountry": registration_country,
+            "emailSource": args.email_source,
             "countryProbe": bool(args.country_probe),
             "proxy": proxy.summary(),
             "elapsedSeconds": time.perf_counter() - started,
@@ -1124,7 +1207,7 @@ def main() -> int:
                 v4.log_proxy_traffic_phases(phase_report)
                 v4.log_proxy_traffic_targets(report)
                 LOG.info(
-                    "Proxy traffic total: upload=%.4f MiB download=%.4f MiB "
+                    "代理总流量: upload=%.4f MiB download=%.4f MiB "
                     "total=%.4f MiB bytes=%s connections=%s failures=%s",
                     float(report.get("uploadMiB") or 0.0),
                     float(report.get("downloadMiB") or 0.0),

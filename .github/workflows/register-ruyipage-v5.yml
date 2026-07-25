@@ -1,15 +1,15 @@
-name: Battle.net auto register (HTTP V5 selectable solver/browser/network)
+name: V5 注册
 
 on:
   workflow_dispatch:
     inputs:
       count:
-        description: "number of registration jobs (1-256)"
+        description: "注册任务数量（1-256）"
         required: true
         default: "1"
         type: string
       max_parallel:
-        description: "maximum concurrent jobs (1-20)"
+        description: "最大并发数量（1-20）"
         required: true
         default: "10"
         type: string
@@ -19,45 +19,57 @@ on:
         default: "USA"
         type: string
       solver:
-        description: "captcha solver"
+        description: "验证码求解方式"
         required: true
-        default: "v11"
+        default: "本地 V11"
         type: choice
         options:
-          - v11
-          - yescaptcha
-          - capmonster
+          - "本地 V11"
+          - "YesCaptcha"
+          - "CapMonster"
       yescaptcha_key:
-        description: "YesCaptcha API key (optional when YESCAPTCHA_API_KEY secret exists)"
+        description: "YesCaptcha 密钥（已配置仓库 Secret 时留空）"
         required: false
         default: ""
         type: string
       capmonster_key:
-        description: "CapMonster API key (optional when CAPMONSTER_API_KEY secret exists)"
+        description: "CapMonster 密钥（已配置仓库 Secret 时留空）"
         required: false
         default: ""
         type: string
       browser:
-        description: "Arkose browser adapter"
+        description: "Arkose 求解浏览器"
         required: true
-        default: "ruyipage"
+        default: "RuyiPage"
         type: choice
         options:
-          - ruyipage
-          - cloakbrowser
+          - "RuyiPage"
+          - "CloakBrowser"
       network:
-        description: "registration network route"
+        description: "注册网络线路"
         required: true
-        default: "direct"
+        default: "直连"
         type: choice
         options:
-          - direct
-          - proxy
+          - "直连"
+          - "代理"
       proxy_file:
-        description: "repository proxy pool path (used only for proxy mode)"
+        description: "代理池文件路径（仅代理模式使用）"
         required: true
         default: "IP.txt"
         type: string
+      email_source:
+        description: "注册邮箱来源"
+        required: true
+        default: "虚拟邮箱"
+        type: choice
+        options:
+          - "虚拟邮箱"
+          - "待注册邮箱"
+
+concurrency:
+  group: ${{ inputs.email_source == '待注册邮箱' && format('V5-待注册邮箱-{0}-{1}', github.repository, github.ref_name) || format('V5-虚拟邮箱-{0}', github.run_id) }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -70,20 +82,26 @@ jobs:
       max_parallel: ${{ steps.matrix.outputs.max_parallel }}
       country_code: ${{ steps.matrix.outputs.country_code }}
       country_name: ${{ steps.matrix.outputs.country_name }}
+      solver: ${{ steps.matrix.outputs.solver }}
+      browser: ${{ steps.matrix.outputs.browser }}
+      network: ${{ steps.matrix.outputs.network }}
+      email_source: ${{ steps.matrix.outputs.email_source }}
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v5
 
-      - name: Validate inputs, proxy pool, and generate matrix
+      - name: 校验输入并生成任务矩阵
         id: matrix
         env:
           REQUESTED_COUNT: ${{ inputs.count }}
           REQUESTED_MAX_PARALLEL: ${{ inputs.max_parallel }}
           REQUESTED_COUNTRY_CODE: ${{ inputs.country_code }}
-          NETWORK_MODE: ${{ inputs.network }}
+          NETWORK_MODE_LABEL: ${{ inputs.network }}
           PROXY_FILE: ${{ inputs.proxy_file }}
-          SOLVER_MODE: ${{ inputs.solver }}
-          BROWSER_MODE: ${{ inputs.browser }}
+          SOLVER_MODE_LABEL: ${{ inputs.solver }}
+          BROWSER_MODE_LABEL: ${{ inputs.browser }}
+          EMAIL_SOURCE_LABEL: ${{ inputs.email_source }}
+          EMAIL_POOL_FILE: "Email_registing.txt"
           YESCAPTCHA_API_KEY: ${{ secrets.YESCAPTCHA_API_KEY || inputs.yescaptcha_key }}
           CAPMONSTER_API_KEY: ${{ secrets.CAPMONSTER_API_KEY || inputs.capmonster_key }}
         run: |
@@ -93,14 +111,15 @@ jobs:
           from pathlib import Path
 
           from v5_proxy_pool import load_proxy_pool
+          from v5_email_pool import validate_pool_capacity
 
           def bounded_int(name, raw, upper):
               try:
                   value = int(raw)
               except (TypeError, ValueError):
-                  raise SystemExit(f"{name} must be an integer, got {raw!r}")
+                  raise SystemExit(f"{name} 必须是整数，当前值为 {raw!r}")
               if not 1 <= value <= upper:
-                  raise SystemExit(f"{name} must be in 1..{upper}, got {value}")
+                  raise SystemExit(f"{name} 必须在 1..{upper} 范围内，当前值为 {value}")
               return value
 
           count = bounded_int("count", os.environ["REQUESTED_COUNT"], 256)
@@ -110,7 +129,7 @@ jobs:
           max_parallel = min(requested_parallel, count, 20)
           country_file = Path("country_codes.txt")
           if not country_file.is_file():
-              raise SystemExit(f"country code file not found: {country_file}")
+              raise SystemExit(f"国家代码文件不存在: {country_file}")
           country_names = {}
           for line_number, raw_line in enumerate(
               country_file.read_text(encoding="utf-8").splitlines(), start=1
@@ -122,66 +141,84 @@ jobs:
                   name, code = line.rsplit("----", 1)
               except ValueError as exc:
                   raise SystemExit(
-                      f"invalid country code row {line_number}: {raw_line!r}"
+                      f"国家代码文件第 {line_number} 行格式错误"
                   ) from exc
               name = name.strip()
               code = code.strip().upper()
               if not name or len(code) != 3 or not code.isalpha():
                   raise SystemExit(
-                      f"invalid country mapping at row {line_number}: {raw_line!r}"
+                      f"国家代码文件第 {line_number} 行映射错误"
                   )
               if code in country_names:
-                  raise SystemExit(f"duplicate country code: {code}")
+                  raise SystemExit(f"国家代码重复: {code}")
               country_names[code] = name
           country_code = os.environ["REQUESTED_COUNTRY_CODE"].strip().upper()
           country_name = country_names.get(country_code)
           if not country_name:
               raise SystemExit(
-                  f"unsupported country code: {country_code!r}; "
-                  "use a three-letter code from country_codes.txt"
+                  f"不支持的国家代码: {country_code!r}；"
+                  "请使用 country_codes.txt 中的三字母代码"
               )
-          solver = os.environ["SOLVER_MODE"].strip().lower()
-          browser = os.environ["BROWSER_MODE"].strip().lower()
+          solver_map = {
+              "本地 V11": "v11",
+              "YesCaptcha": "yescaptcha",
+              "CapMonster": "capmonster",
+          }
+          browser_map = {"RuyiPage": "ruyipage", "CloakBrowser": "cloakbrowser"}
+          network_map = {"直连": "direct", "代理": "proxy"}
+          email_source_map = {"虚拟邮箱": "generated", "待注册邮箱": "pool"}
+          try:
+              solver = solver_map[os.environ["SOLVER_MODE_LABEL"].strip()]
+              browser = browser_map[os.environ["BROWSER_MODE_LABEL"].strip()]
+              network = network_map[os.environ["NETWORK_MODE_LABEL"].strip()]
+              email_source = email_source_map[os.environ["EMAIL_SOURCE_LABEL"].strip()]
+          except KeyError as exc:
+              raise SystemExit(f"不支持的工作流选项: {exc.args[0]}") from exc
           yescaptcha_key = os.environ.get("YESCAPTCHA_API_KEY", "").strip()
           capmonster_key = os.environ.get("CAPMONSTER_API_KEY", "").strip()
           for value in (yescaptcha_key, capmonster_key):
               if value:
                   print(f"::add-mask::{value}")
           if solver == "yescaptcha" and not yescaptcha_key:
-              raise SystemExit(
-                  "yescaptcha requires the YESCAPTCHA_API_KEY repository secret "
-                  "or the yescaptcha_key workflow input"
-              )
+              raise SystemExit("YesCaptcha 模式需要仓库 Secret 或手动输入密钥")
           if solver == "capmonster" and not capmonster_key:
-              raise SystemExit(
-                  "capmonster requires the CAPMONSTER_API_KEY repository secret "
-                  "or the capmonster_key workflow input"
-              )
-          network = os.environ["NETWORK_MODE"].strip().lower()
-          if network not in {"direct", "proxy"}:
-              raise SystemExit(f"unsupported network mode: {network}")
+              raise SystemExit("CapMonster 模式需要仓库 Secret 或手动输入密钥")
           if network == "proxy":
               root = Path.cwd().resolve()
               proxy_path = (root / os.environ["PROXY_FILE"]).resolve()
               if root not in proxy_path.parents:
-                  raise SystemExit("proxy_file must stay inside the repository")
+                  raise SystemExit("代理池文件必须位于仓库目录内")
               if not proxy_path.is_file():
-                  raise SystemExit(f"proxy file not found: {proxy_path}")
+                  raise SystemExit(f"代理池文件不存在: {proxy_path}")
               records = load_proxy_pool(proxy_path)
               if len(records) < count:
                   raise SystemExit(
-                      f"proxy pool has {len(records)} entries, but {count} jobs were requested"
+                      f"代理池只有 {len(records)} 条，但任务需要 {count} 条"
                   )
-              print(f"proxy pool valid: count={len(records)}, required={count}")
+              print(f"代理池校验通过：总数={len(records)}，需要={count}")
+          if email_source == "pool":
+              root = Path.cwd().resolve()
+              email_pool_path = (root / os.environ["EMAIL_POOL_FILE"]).resolve()
+              if root not in email_pool_path.parents:
+                  raise SystemExit("待注册邮箱文件必须位于仓库目录内")
+              pool_count = validate_pool_capacity(email_pool_path, count)
+              print(f"待注册邮箱校验通过：总数={pool_count}，需要={count}")
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as fp:
               fp.write(f"indices={json.dumps(list(range(1, count + 1)))}\n")
               fp.write(f"max_parallel={max_parallel}\n")
               fp.write(f"country_code={country_code}\n")
               fp.write(f"country_name={country_name}\n")
+              fp.write(f"solver={solver}\n")
+              fp.write(f"browser={browser}\n")
+              fp.write(f"network={network}\n")
+              fp.write(f"email_source={email_source}\n")
           print(
-              f"matrix size={count} max_parallel={max_parallel} "
-              f"solver={solver} browser={browser} network={network} "
-              f"country={country_name}({country_code})"
+              f"任务数={count} 最大并发={max_parallel} "
+              f"求解={os.environ['SOLVER_MODE_LABEL']} "
+              f"浏览器={os.environ['BROWSER_MODE_LABEL']} "
+              f"网络={os.environ['NETWORK_MODE_LABEL']} "
+              f"邮箱来源={os.environ['EMAIL_SOURCE_LABEL']} "
+              f"国家={country_name}({country_code})"
           )
           PY
 
@@ -190,26 +227,26 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v5
 
-      - name: Setup Python
+      - name: 配置 Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Cache V5 virtualenv
+      - name: 缓存 V5 虚拟环境
         id: venv
         uses: actions/cache@v5
         with:
           path: .venv
-          key: v5-${{ inputs.solver }}-${{ inputs.browser }}-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage-v5.txt', 'requirements-ruyipage-v4.txt', 'rank_v11/requirements.txt') }}
+          key: v5-${{ needs.prepare.outputs.solver }}-${{ needs.prepare.outputs.browser }}-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage-v5.txt', 'requirements-ruyipage-v4.txt', 'rank_v11/requirements.txt') }}
 
-      - name: Build V5 virtualenv
+      - name: 构建 V5 虚拟环境
         if: steps.venv.outputs.cache-hit != 'true'
         env:
-          V5_SOLVER: ${{ inputs.solver }}
-          V5_BROWSER: ${{ inputs.browser }}
+          V5_SOLVER: ${{ needs.prepare.outputs.solver }}
+          V5_BROWSER: ${{ needs.prepare.outputs.browser }}
         run: |
           set -euo pipefail
           python -m venv .venv
@@ -223,10 +260,10 @@ jobs:
             .venv/bin/pip install "cloakbrowser>=0.4.10"
           fi
 
-      - name: Validate selected dependencies
+      - name: 校验所选依赖
         env:
-          V5_SOLVER: ${{ inputs.solver }}
-          V5_BROWSER: ${{ inputs.browser }}
+          V5_SOLVER: ${{ needs.prepare.outputs.solver }}
+          V5_BROWSER: ${{ needs.prepare.outputs.browser }}
         run: |
           .venv/bin/python - <<'PY'
           import importlib.util
@@ -242,35 +279,35 @@ jobs:
               required.append("cloakbrowser")
           missing = [name for name in required if importlib.util.find_spec(name) is None]
           if missing:
-              raise SystemExit(f"missing modules: {missing}")
+              raise SystemExit(f"缺少模块: {missing}")
           import register_ruyipage_v5
-          print("V5 dependency check OK")
+          print("V5 依赖校验通过")
           PY
 
-      - name: Cache RuyiPage Firefox runtime
+      - name: 缓存 RuyiPage Firefox 运行时
         id: ruyi-runtime
         uses: actions/cache@v5
         with:
           path: ~/.cache/ruyipage
           key: ruyipage-firefox-${{ runner.os }}-v1
 
-      - name: Install RuyiPage Firefox runtime
+      - name: 安装 RuyiPage Firefox 运行时
         if: steps.ruyi-runtime.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           .venv/bin/python -m ruyipage install
           .venv/bin/python -m ruyipage doctor
 
-      - name: Cache CloakBrowser Chromium runtime
-        if: inputs.browser == 'cloakbrowser'
+      - name: 缓存 CloakBrowser Chromium 运行时
+        if: needs.prepare.outputs.browser == 'cloakbrowser'
         id: cloak-runtime
         uses: actions/cache@v5
         with:
           path: ~/.cloakbrowser
           key: cloakbrowser-chromium-${{ runner.os }}-v1
 
-      - name: Install CloakBrowser Chromium runtime
-        if: inputs.browser == 'cloakbrowser' && steps.cloak-runtime.outputs.cache-hit != 'true'
+      - name: 安装 CloakBrowser Chromium 运行时
+        if: needs.prepare.outputs.browser == 'cloakbrowser' && steps.cloak-runtime.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           .venv/bin/python - <<'PY'
@@ -278,14 +315,14 @@ jobs:
           cloakbrowser.ensure_binary()
           info = cloakbrowser.binary_info()
           if not info.get("installed"):
-              raise SystemExit(f"CloakBrowser binary unavailable: {info}")
-          print(f"CloakBrowser ready: version={info.get('version')}")
+              raise SystemExit(f"CloakBrowser 浏览器不可用: {info}")
+          print(f"CloakBrowser 已就绪：版本={info.get('version')}")
           PY
 
   register:
     needs: [prepare, deps-cache]
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       max-parallel: ${{ fromJSON(needs.prepare.outputs.max_parallel) }}
@@ -293,37 +330,37 @@ jobs:
         index: ${{ fromJSON(needs.prepare.outputs.indices) }}
 
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v5
 
-      - name: Setup Python
+      - name: 配置 Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Restore V5 virtualenv
+      - name: 恢复 V5 虚拟环境
         id: venv
         uses: actions/cache@v5
         with:
           path: .venv
-          key: v5-${{ inputs.solver }}-${{ inputs.browser }}-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage-v5.txt', 'requirements-ruyipage-v4.txt', 'rank_v11/requirements.txt') }}
+          key: v5-${{ needs.prepare.outputs.solver }}-${{ needs.prepare.outputs.browser }}-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage-v5.txt', 'requirements-ruyipage-v4.txt', 'rank_v11/requirements.txt') }}
 
-      - name: Restore RuyiPage Firefox runtime
+      - name: 恢复 RuyiPage Firefox 运行时
         id: ruyi-runtime
         uses: actions/cache@v5
         with:
           path: ~/.cache/ruyipage
           key: ruyipage-firefox-${{ runner.os }}-v1
 
-      - name: Restore CloakBrowser Chromium runtime
-        if: inputs.browser == 'cloakbrowser'
+      - name: 恢复 CloakBrowser Chromium 运行时
+        if: needs.prepare.outputs.browser == 'cloakbrowser'
         id: cloak-runtime
         uses: actions/cache@v5
         with:
           path: ~/.cloakbrowser
           key: cloakbrowser-chromium-${{ runner.os }}-v1
 
-      - name: Restore V5 public static cache
+      - name: 恢复 V5 公共静态缓存
         id: public-static-cache
         uses: actions/cache/restore@v5
         with:
@@ -332,11 +369,11 @@ jobs:
           restore-keys: |
             http-v5-public-static-v1-
 
-      - name: Repair missing cached dependencies
-        if: steps.venv.outputs.cache-hit != 'true' || steps.ruyi-runtime.outputs.cache-hit != 'true' || (inputs.browser == 'cloakbrowser' && steps.cloak-runtime.outputs.cache-hit != 'true')
+      - name: 修复缺失的缓存依赖
+        if: steps.venv.outputs.cache-hit != 'true' || steps.ruyi-runtime.outputs.cache-hit != 'true' || (needs.prepare.outputs.browser == 'cloakbrowser' && steps.cloak-runtime.outputs.cache-hit != 'true')
         env:
-          V5_SOLVER: ${{ inputs.solver }}
-          V5_BROWSER: ${{ inputs.browser }}
+          V5_SOLVER: ${{ needs.prepare.outputs.solver }}
+          V5_BROWSER: ${{ needs.prepare.outputs.browser }}
         run: |
           set -euo pipefail
           if [ ! -x .venv/bin/python ]; then
@@ -359,16 +396,16 @@ jobs:
             .venv/bin/python -c "import cloakbrowser; cloakbrowser.ensure_binary()"
           fi
 
-      - name: Ensure Xvfb is available
+      - name: 确保 Xvfb 可用
         run: |
           if ! command -v xvfb-run >/dev/null 2>&1 || ! command -v xauth >/dev/null 2>&1; then
             sudo apt-get update -qq
             sudo apt-get install -y -qq xvfb xauth
           fi
 
-      - name: Allocate network route
+      - name: 分配网络线路
         env:
-          NETWORK_MODE: ${{ inputs.network }}
+          NETWORK_MODE: ${{ needs.prepare.outputs.network }}
           PROXY_FILE: ${{ inputs.proxy_file }}
           JOB_INDEX: ${{ matrix.index }}
         run: |
@@ -380,13 +417,13 @@ jobs:
               --github-env
           else
             echo "REGISTRATION_PROXY=" >> "$GITHUB_ENV"
-            echo "Network route: direct"
+            echo "网络线路：直连"
           fi
 
-      - name: Mask selected provider credential
-        if: inputs.solver == 'yescaptcha' || inputs.solver == 'capmonster'
+      - name: 隐藏打码平台密钥
+        if: needs.prepare.outputs.solver == 'yescaptcha' || needs.prepare.outputs.solver == 'capmonster'
         env:
-          SOLVER_MODE: ${{ inputs.solver }}
+          SOLVER_MODE: ${{ needs.prepare.outputs.solver }}
           YESCAPTCHA_API_KEY: ${{ secrets.YESCAPTCHA_API_KEY || inputs.yescaptcha_key }}
           CAPMONSTER_API_KEY: ${{ secrets.CAPMONSTER_API_KEY || inputs.capmonster_key }}
         run: |
@@ -399,8 +436,8 @@ jobs:
           test -n "$provider_key"
           echo "::add-mask::$provider_key"
 
-      - name: Start persistent local V11 service
-        if: inputs.solver == 'v11'
+      - name: 启动本地 V11 服务
+        if: needs.prepare.outputs.solver == 'v11'
         env:
           RANK_V11_CACHE_DIR: ${{ runner.temp }}/rank_v11_cache_${{ matrix.index }}
         run: |
@@ -415,10 +452,14 @@ jobs:
             > rank_v11_server.log 2>&1 &
           echo $! > rank_v11_server.pid
 
-      - name: Run HTTP V5 registration
+      - name: 执行 HTTP V5 注册
         env:
-          V5_SOLVER: ${{ inputs.solver }}
+          V5_SOLVER: ${{ needs.prepare.outputs.solver }}
+          V5_BROWSER: ${{ needs.prepare.outputs.browser }}
           V5_COUNTRY: ${{ needs.prepare.outputs.country_code }}
+          V5_EMAIL_SOURCE: ${{ needs.prepare.outputs.email_source }}
+          V5_EMAIL_POOL_FILE: Email_registing.txt
+          V5_EMAIL_POOL_INDEX: ${{ matrix.index }}
           RANK_V11_URL: http://127.0.0.1:8765
           YESCAPTCHA_API_KEY: ${{ secrets.YESCAPTCHA_API_KEY || inputs.yescaptcha_key }}
           CAPMONSTER_API_KEY: ${{ secrets.CAPMONSTER_API_KEY || inputs.capmonster_key }}
@@ -440,12 +481,15 @@ jobs:
           fi
           last_rc=1
           for attempt in 1 2 3; do
-            echo "::group::V5 registration attempt ${attempt}/3"
+            echo "::group::V5 注册尝试 ${attempt}/3"
             xvfb-run -a --server-args="-screen 0 1920x1080x24" \
               .venv/bin/python register_ruyipage_v5.py \
-                --solver "${{ inputs.solver }}" \
-                --browser "${{ inputs.browser }}" \
+                --solver "$V5_SOLVER" \
+                --browser "$V5_BROWSER" \
                 --country "$V5_COUNTRY" \
+                --email-source "$V5_EMAIL_SOURCE" \
+                --email-pool-file "$V5_EMAIL_POOL_FILE" \
+                --email-pool-index "$V5_EMAIL_POOL_INDEX" \
                 --proxy "$REGISTRATION_PROXY" \
                 --country-probe \
                 --headless \
@@ -453,13 +497,13 @@ jobs:
                 --static-cache-dir "$V5_STATIC_CACHE_DIR" \
                 --rank-v11-url "$RANK_V11_URL"
             last_rc=$?
-            echo "V5 attempt ${attempt}/3 exited with ${last_rc}"
+            echo "V5 第 ${attempt}/3 次尝试退出码：${last_rc}"
             echo "::endgroup::"
             if [ "$last_rc" -eq 0 ]; then
               exit 0
             fi
             if [ "$last_rc" -eq 42 ]; then
-              echo "Unsupported Arkose classification; stop without retry"
+              echo "Arkose 题型不受支持，停止重试"
               exit 42
             fi
             if [ "$attempt" -lt 3 ]; then
@@ -468,21 +512,21 @@ jobs:
           done
           exit "$last_rc"
 
-      - name: Save refreshed V5 public static cache
+      - name: 保存更新后的 V5 公共静态缓存
         if: always() && matrix.index == 1
         uses: actions/cache/save@v5
         with:
           path: .cache/v5_public_static
           key: http-v5-public-static-v1-${{ github.run_id }}
 
-      - name: Stop local V11 service
-        if: always() && inputs.solver == 'v11'
+      - name: 停止本地 V11 服务
+        if: always() && needs.prepare.outputs.solver == 'v11'
         run: |
           if [ -f rank_v11_server.pid ]; then
             kill "$(cat rank_v11_server.pid)" 2>/dev/null || true
           fi
 
-      - name: Export successful account
+      - name: 导出成功账号
         if: always()
         run: |
           python3 - <<'PY'
@@ -491,6 +535,7 @@ jobs:
 
           root = Path("ruyipage_http_v5_register/runs")
           records = []
+          consumed = set()
           seen = set()
           for account_path in sorted(root.glob("run_*/account_generated.json")):
               run_dir = account_path.parent
@@ -505,55 +550,75 @@ jobs:
               if not email or email.lower() in seen:
                   continue
               seen.add(email.lower())
+              verification = dict(result.get("emailVerification") or {})
+              note = str(verification.get("note") or "").strip()
+              lines = [
+                  f"账号：{email}",
+                  f"密码：{account.get('password', '')}",
+              ]
+              if note:
+                  lines.append(f"说明：{note}")
               records.append(
-                  "\n".join(
-                      [
-                          f"账号：{email}",
-                          f"密码：{account.get('password', '')}",
-                      ]
-                  )
+                  "\n".join(lines)
               )
+              if str(result.get("emailSource") or "") == "pool":
+                  consumed.add(email)
           if records:
               Path("registered_account.txt").write_text(
                   "\n\n".join(records) + "\n", encoding="utf-8"
               )
-          print(f"Recovered {len(records)} successful account(s)")
+          if consumed:
+              Path("consumed_email.txt").write_text(
+                  "\n".join(sorted(consumed, key=str.casefold)) + "\n",
+                  encoding="utf-8",
+              )
+          print(f"已恢复 {len(records)} 个成功账号，待消费邮箱 {len(consumed)} 个")
           PY
 
-      - name: Upload V5 run data
+      - name: 上传 V5 运行数据
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: http-v5-${{ inputs.solver }}-${{ inputs.browser }}-reg-data-${{ matrix.index }}
+          name: V5-${{ inputs.solver }}-${{ inputs.browser }}-运行数据-${{ matrix.index }}
           path: |
             rank_v11_server.log
             ruyipage_http_v5_register/runs/**
           if-no-files-found: ignore
           compression-level: 6
 
-      - name: Upload V5 account data
+      - name: 上传 V5 账号数据
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: http-v5-reg-accounts-${{ matrix.index }}
-          path: registered_account.txt
+          name: V5-账号-${{ matrix.index }}
+          path: |
+            registered_account.txt
+            consumed_email.txt
           if-no-files-found: ignore
           compression-level: 9
 
   collect:
-    needs: register
+    needs: [prepare, register]
     if: always()
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - name: Download all V5 account artifacts
+      - name: 检出代码
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: 下载全部 V5 账号数据
         continue-on-error: true
         uses: actions/download-artifact@v7
         with:
-          pattern: http-v5-reg-accounts-*
+          pattern: V5-账号-*
           path: all_accounts
           merge-multiple: false
 
-      - name: Merge account files
+      - name: 汇总账号与成功邮箱
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -562,16 +627,81 @@ jobs:
           chunks = [path.read_text(encoding="utf-8").strip() for path in files]
           output = "\n\n".join(chunk for chunk in chunks if chunk).strip()
           Path("all_accounts.txt").write_text(
-              (output + "\n") if output else "(no successful accounts)\n",
+              (output + "\n") if output else "（没有成功账号）\n",
               encoding="utf-8",
           )
-          print(f"Merged {len(files)} account file(s)")
+          consumed = set()
+          for path in Path("all_accounts").glob("**/consumed_email.txt"):
+              consumed.update(
+                  line.strip()
+                  for line in path.read_text(encoding="utf-8").splitlines()
+                  if line.strip()
+              )
+          Path("successful_emails.txt").write_text(
+              ("\n".join(sorted(consumed, key=str.casefold)) + "\n")
+              if consumed else "",
+              encoding="utf-8",
+          )
+          print(f"已合并 {len(files)} 个账号文件，成功待注册邮箱 {len(consumed)} 个")
           PY
 
-      - name: Upload merged V5 account data
+      - name: 从待注册邮箱池删除成功邮箱
+        if: inputs.email_source == '待注册邮箱'
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          from v5_email_pool import remove_consumed_emails
+
+          success_path = Path("successful_emails.txt")
+          emails = (
+              [line.strip() for line in success_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+              if success_path.is_file() else []
+          )
+          result = remove_consumed_emails(Path("Email_registing.txt"), emails)
+          Path("email_pool_update.json").write_text(
+              json.dumps(result, ensure_ascii=False, indent=2),
+              encoding="utf-8",
+          )
+          print(
+              f"邮箱池更新完成：成功邮箱={result['requested']} "
+              f"删除={result['removed']} 剩余={result['remaining']}"
+          )
+          PY
+
+      - name: 提交待注册邮箱池更新
+        if: inputs.email_source == '待注册邮箱'
+        env:
+          TARGET_BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- Email_registing.txt; then
+            echo "待注册邮箱池没有变化，无需提交"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Email_registing.txt
+          git commit -m "V5：移除已成功注册邮箱"
+          for attempt in 1 2 3; do
+            git pull --rebase origin "$TARGET_BRANCH"
+            if git push origin "HEAD:$TARGET_BRANCH"; then
+              echo "待注册邮箱池已提交到 $TARGET_BRANCH"
+              exit 0
+            fi
+            sleep $((attempt * 2))
+          done
+          echo "待注册邮箱池连续三次推送失败"
+          exit 1
+
+      - name: 上传 V5 汇总结果
         uses: actions/upload-artifact@v6
         with:
-          name: all-http-v5-registered-accounts
-          path: all_accounts.txt
+          name: V5-全部成功账号
+          path: |
+            all_accounts.txt
+            successful_emails.txt
+            email_pool_update.json
           if-no-files-found: error
           compression-level: 9

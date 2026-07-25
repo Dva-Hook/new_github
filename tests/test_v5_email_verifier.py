@@ -3,7 +3,13 @@ from __future__ import annotations
 import unittest
 from datetime import datetime, timezone
 
-from v5_email_verifier import direct_battlenet_link, extract_battlenet_link, find_link
+from v5_email_verifier import (
+    _wait_login_phase,
+    direct_battlenet_link,
+    extract_battlenet_link,
+    find_link,
+    is_login_success_state,
+)
 
 
 class FakeResponse:
@@ -27,7 +33,90 @@ class FakeSession:
         return FakeResponse(self.payload)
 
 
+class FakeLoginPage:
+    def __init__(self, states: list[dict]) -> None:
+        self.states = list(states)
+        self.last = dict(states[-1])
+
+    def run_js(self, *_args, **_kwargs) -> dict:
+        if self.states:
+            self.last = dict(self.states.pop(0))
+        return dict(self.last)
+
+
 class EmailVerifierTests(unittest.TestCase):
+    def test_post_password_wait_ignores_visible_password_until_success(self) -> None:
+        page = FakeLoginPage(
+            [
+                {
+                    "password_input_present": True,
+                    "login_form_present": True,
+                },
+                {
+                    "password_input_present": True,
+                    "login_form_present": True,
+                },
+                {
+                    "password_input_present": False,
+                    "login_form_present": False,
+                    "protected_shell_present": True,
+                },
+            ]
+        )
+        phase, _state = _wait_login_phase(
+            page,
+            0.5,
+            accept_password=False,
+            poll_interval=0,
+        )
+        self.assertEqual(phase, "success")
+
+    def test_pre_password_wait_accepts_password_step(self) -> None:
+        page = FakeLoginPage(
+            [{"password_input_present": True, "login_form_present": True}]
+        )
+        phase, _state = _wait_login_phase(
+            page,
+            0.5,
+            accept_password=True,
+            poll_interval=0,
+        )
+        self.assertEqual(phase, "password")
+
+    def test_login_challenge_precedes_success_markers(self) -> None:
+        state = {
+            "security_challenge_present": True,
+            "email_code_challenge_present": True,
+            "protected_shell_present": True,
+        }
+        self.assertFalse(is_login_success_state(state))
+        phase, _state = _wait_login_phase(
+            FakeLoginPage([state]),
+            0.5,
+            accept_password=False,
+            poll_interval=0,
+        )
+        self.assertEqual(phase, "manual_email_code")
+
+    def test_explicit_login_error_is_not_reported_as_timeout(self) -> None:
+        page = FakeLoginPage(
+            [
+                {
+                    "password_input_present": True,
+                    "login_form_present": True,
+                    "login_error_text": "Invalid credentials",
+                }
+            ]
+        )
+        phase, state = _wait_login_phase(
+            page,
+            0.5,
+            accept_password=False,
+            poll_interval=0,
+        )
+        self.assertEqual(phase, "login_error")
+        self.assertEqual(state["login_error_text"], "Invalid credentials")
+
     def test_extracts_direct_ticket_link(self) -> None:
         link = "https://account.battle.net/overview?ticket=abc123"
         message = {

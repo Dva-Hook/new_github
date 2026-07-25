@@ -44,8 +44,49 @@ NAVIGATION_STATE_JS = r"""return (() => {
 })();"""
 
 
+CLEAR_ACCOUNT_SESSION_JS = r"""return (async () => {
+  const result = {
+    ok: true,
+    localCleared: false,
+    sessionCleared: false,
+    indexedDbCleared: false,
+    indexedDbDeleted: []
+  };
+  try {
+    localStorage.clear();
+    result.localCleared = true;
+  } catch (error) {
+    result.ok = false;
+    result.localError = String(error);
+  }
+  try {
+    sessionStorage.clear();
+    result.sessionCleared = true;
+  } catch (error) {
+    result.ok = false;
+    result.sessionError = String(error);
+  }
+  try {
+    if (indexedDB && indexedDB.databases) {
+      const databases = await indexedDB.databases();
+      await Promise.all(databases.map((database) => new Promise((resolve) => {
+        if (!database.name) return resolve();
+        const request = indexedDB.deleteDatabase(database.name);
+        request.onsuccess = request.onerror = request.onblocked = () => resolve();
+        result.indexedDbDeleted.push(database.name);
+      })));
+    }
+    result.indexedDbCleared = true;
+  } catch (error) {
+    result.ok = false;
+    result.indexedDbError = String(error);
+  }
+  return result;
+})();"""
+
+
 LOGIN_STATE_JS = r"""return (() => {
-  const visible = (element) => {
+  const isVisible = (element) => {
     if (!element) return false;
     const style = getComputedStyle(element);
     const rect = element.getBoundingClientRect();
@@ -53,9 +94,18 @@ LOGIN_STATE_JS = r"""return (() => {
       && rect.width > 0 && rect.height > 0;
   };
   const anyVisible = (selector, root = document) =>
-    Array.from(root.querySelectorAll(selector)).some(visible);
+    Array.from(root.querySelectorAll(selector)).some(isVisible);
+  const accountInput = anyVisible('#accountName');
+  const passwordInput = anyVisible('#password');
+  const loginForm = accountInput || passwordInput;
+  const successMarker = anyVisible(
+    '#code-claim, a[href*="logout"], #account-settings, .account-overview'
+  );
+  const protectedShell = anyVisible(
+    'a[href*="/overview"], a[href*="/details"]'
+  );
   const pageText = String(document.body?.innerText || '').toLowerCase();
-  const codeInput = anyVisible([
+  const codeChallenge = anyVisible([
     'input[autocomplete="one-time-code"]',
     'input[id*="security" i]',
     'input[name*="security" i]',
@@ -70,23 +120,36 @@ LOGIN_STATE_JS = r"""return (() => {
     (form) => anyVisible('select', form)
       && anyVisible('button[type="submit"], input[type="submit"], button:not([type])', form)
   );
-  const emailWords = /e-mail|email|mailbox|邮箱|邮件|verification code|security code/.test(pageText);
-  const protectedShell = anyVisible(
-    '#code-claim, a[href*="logout"], a[href*="/overview"], '
-    + 'a[href*="/details"], #account-settings, .account-overview'
+  const dynamicChallenge = Array.from(document.querySelectorAll('form')).some(
+    (form) => anyVisible('.challenge-body input, .challenge-body select', form)
+      && anyVisible('button[type="submit"], input[type="submit"], button:not([type])', form)
   );
+  const securityChallenge = codeChallenge || dynamicChallenge
+    || (!loginForm && !protectedShell && methodChallenge);
+  const emailWords = /e-mail|email|mailbox|邮箱|邮件|verification code|security code/.test(pageText);
+  const errorNodes = Array.from(document.querySelectorAll(
+    'form .error-message, form .field-validation-error, form .alert-danger, '
+    + 'form .alert-error, form [role="alert"]'
+  )).filter(isVisible);
+  const loginErrorText = errorNodes
+    .map((item) => String(item.innerText || item.textContent || '').trim())
+    .filter(Boolean).join(' ').slice(0, 240);
   const href = String(location.href || '');
   return {
     href,
-    account_input: anyVisible('#accountName'),
-    password_input: anyVisible('#password'),
-    email_code_challenge: (codeInput || methodChallenge) && emailWords,
-    security_challenge: codeInput || methodChallenge,
-    success: protectedShell || (
+    account_input_present: accountInput,
+    password_input_present: passwordInput,
+    login_form_present: loginForm,
+    success_marker_present: successMarker,
+    protected_shell_present: protectedShell,
+    email_code_challenge_present: securityChallenge && emailWords,
+    security_challenge_present: securityChallenge,
+    overview_url: /account\.battle\.net\/overview(?:[/?#]|$)/i.test(href),
+    login_error_text: loginErrorText,
+    success: !securityChallenge && (successMarker || protectedShell || (
       /account\.battle\.net\/overview(?:[/?#]|$)/i.test(href)
-      && !anyVisible('#accountName, #password')
-      && !codeInput
-    )
+      && !loginForm
+    ))
   };
 })();"""
 
@@ -214,27 +277,122 @@ def navigate_with_retry(
     raise RuntimeError(f"{description}连续导航失败: {last_detail}")
 
 
+def delete_account_cookies(page: Any) -> None:
+    with contextlib.suppress(Exception):
+        page.delete_cookies()
+    for domain in (
+        "battle.net",
+        ".battle.net",
+        "account.battle.net",
+        ".account.battle.net",
+        "us.account.battle.net",
+        ".us.account.battle.net",
+        "eu.account.battle.net",
+        ".eu.account.battle.net",
+        "kr.account.battle.net",
+        ".kr.account.battle.net",
+    ):
+        with contextlib.suppress(Exception):
+            page.delete_cookies(domain=domain)
+
+
+def clear_account_session_storage(
+    page: Any,
+    description: str,
+    *,
+    warn_on_failure: bool = True,
+) -> None:
+    try:
+        result = page.run_js(CLEAR_ACCOUNT_SESSION_JS, timeout=10)
+        if warn_on_failure and (
+            not isinstance(result, dict) or not result.get("ok")
+        ):
+            LOG.warning("%s Web Storage/IndexedDB 未完全清理: %s", description, result)
+    except Exception as exc:
+        if warn_on_failure:
+            LOG.warning("清理 %s Web Storage/IndexedDB 失败: %s", description, exc)
+
+
+def prepare_clean_login_page(page: Any) -> None:
+    with contextlib.suppress(Exception):
+        page.close_other_tabs()
+    delete_account_cookies(page)
+    clear_account_session_storage(page, "当前页", warn_on_failure=False)
+    navigate_with_retry(page, LOGIN_URL, "Battle.net 登录页")
+    delete_account_cookies(page)
+    clear_account_session_storage(page, "登录域")
+    navigate_with_retry(page, LOGIN_URL, "Battle.net 登录页")
+
+
 def _read_login_state(page: Any) -> dict[str, Any]:
     state = page.run_js(LOGIN_STATE_JS, timeout=5)
     return dict(state) if isinstance(state, dict) else {}
 
 
-def _wait_login_phase(page: Any, timeout: float) -> tuple[str, dict[str, Any]]:
+def is_login_success_state(state: dict[str, Any]) -> bool:
+    if state.get("security_challenge_present"):
+        return False
+    return bool(
+        state.get("protected_shell_present")
+        or state.get("success_marker_present")
+        or (state.get("overview_url") and not state.get("login_form_present"))
+        or state.get("success")
+    )
+
+
+def _classify_login_state(
+    state: dict[str, Any],
+    *,
+    accept_password: bool,
+) -> Optional[str]:
+    if state.get("email_code_challenge_present"):
+        return "manual_email_code"
+    if state.get("security_challenge_present"):
+        return "manual_security_check"
+    if is_login_success_state(state):
+        return "success"
+    if state.get("login_error_text"):
+        return "login_error"
+    if accept_password and state.get("password_input_present"):
+        return "password"
+    return None
+
+
+def _wait_login_phase(
+    page: Any,
+    timeout: float,
+    *,
+    accept_password: bool,
+    poll_interval: float = 0.5,
+) -> tuple[str, dict[str, Any]]:
     deadline = time.monotonic() + max(0.1, float(timeout))
     last: dict[str, Any] = {}
     while time.monotonic() < deadline:
         with contextlib.suppress(Exception):
             last = _read_login_state(page)
-            if last.get("email_code_challenge"):
-                return "manual_email_code", last
-            if last.get("security_challenge"):
-                return "manual_security_check", last
-            if last.get("success"):
-                return "success", last
-            if last.get("password_input"):
-                return "password", last
-        time.sleep(0.5)
+            phase = _classify_login_state(
+                last,
+                accept_password=accept_password,
+            )
+            if phase:
+                return phase, last
+        if poll_interval > 0:
+            time.sleep(poll_interval)
     return "timeout", last
+
+
+def _manual_login_result(phase: str) -> EmailVerificationResult:
+    if phase == "manual_email_code":
+        return EmailVerificationResult(
+            False,
+            "manual_email_code",
+            "该账号登录时弹出邮箱验证码，需手动验证",
+        )
+    return EmailVerificationResult(
+        False,
+        "manual_security_check",
+        "该账号登录时弹出安全验证，需手动验证",
+    )
 
 
 def login_battle_net(
@@ -244,46 +402,49 @@ def login_battle_net(
     *,
     timeout: float,
 ) -> EmailVerificationResult:
-    navigate_with_retry(page, LOGIN_URL, "Battle.net 登录页")
+    LOG.info("打开 Battle.net 登录页: %s", email)
+    prepare_clean_login_page(page)
     close_cookie_banner(page)
     account_input = wait_element(page, "#accountName", min(30.0, timeout))
     account_input.input(email, clear=True)
     click_element(page, "#submit")
-    phase, _state = _wait_login_phase(page, min(30.0, timeout))
-    if phase == "manual_email_code":
-        return EmailVerificationResult(
-            False,
-            "manual_email_code",
-            "该账号登录时弹出邮箱验证码，需手动验证",
-        )
-    if phase == "manual_security_check":
-        return EmailVerificationResult(
-            False,
-            "manual_security_check",
-            "该账号登录时弹出安全验证，需手动验证",
-        )
+    phase, state = _wait_login_phase(
+        page,
+        min(30.0, timeout),
+        accept_password=True,
+    )
+    if phase in {"manual_email_code", "manual_security_check"}:
+        return _manual_login_result(phase)
     if phase == "success":
         return EmailVerificationResult(True, "logged_in")
+    if phase == "login_error":
+        return EmailVerificationResult(
+            False,
+            "login_rejected",
+            f"Battle.net 登录失败：{state.get('login_error_text')}",
+        )
     if phase != "password":
         return EmailVerificationResult(False, "login_failed", "登录页未进入密码步骤")
 
     password_input = wait_element(page, "#password", min(30.0, timeout))
     password_input.input(password, clear=True)
     click_element(page, "#submit")
-    phase, _state = _wait_login_phase(page, timeout)
+    LOG.info("已提交密码，等待 Battle.net 登录完成")
+    phase, state = _wait_login_phase(
+        page,
+        timeout,
+        accept_password=False,
+    )
     if phase == "success":
+        LOG.info("Battle.net 登录成功: %s", email)
         return EmailVerificationResult(True, "logged_in")
-    if phase == "manual_email_code":
+    if phase in {"manual_email_code", "manual_security_check"}:
+        return _manual_login_result(phase)
+    if phase == "login_error":
         return EmailVerificationResult(
             False,
-            "manual_email_code",
-            "该账号登录时弹出邮箱验证码，需手动验证",
-        )
-    if phase == "manual_security_check":
-        return EmailVerificationResult(
-            False,
-            "manual_security_check",
-            "该账号登录时弹出安全验证，需手动验证",
+            "login_rejected",
+            f"Battle.net 登录失败：{state.get('login_error_text')}",
         )
     return EmailVerificationResult(False, "login_failed", "Battle.net 登录状态确认超时")
 

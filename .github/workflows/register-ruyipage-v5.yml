@@ -13,6 +13,255 @@ on:
         required: true
         default: "10"
         type: string
+      country:
+        description: "注册国家/地区"
+        required: true
+        default: "美国"
+        type: choice
+        options:
+          - "美国"
+          - "阿尔巴尼亚"
+          - "阿尔及利亚"
+          - "阿富汗"
+          - "阿根廷"
+          - "阿拉伯联合酋长国"
+          - "阿鲁巴岛"
+          - "阿曼"
+          - "阿塞拜疆"
+          - "埃及"
+          - "埃塞俄比亚"
+          - "爱尔兰"
+          - "爱沙尼亚"
+          - "安道尔"
+          - "安哥拉"
+          - "安圭拉"
+          - "安提瓜和巴布达"
+          - "奥地利"
+          - "奥兰群岛"
+          - "澳大利亚"
+          - "澳门"
+          - "巴巴多斯"
+          - "巴布亚新几内亚"
+          - "巴哈马"
+          - "巴基斯坦"
+          - "巴拉圭"
+          - "巴勒斯坦领土"
+          - "巴林"
+          - "巴拿马"
+          - "巴西"
+          - "白俄罗斯"
+          - "百慕达"
+          - "保加利亚"
+          - "北马里亚纳群岛"
+          - "贝宁"
+          - "比利时"
+          - "冰岛"
+          - "玻利维亚"
+          - "波多黎各"
+          - "波兰"
+          - "波斯尼亚和黑塞哥维那"
+          - "博茨瓦那"
+          - "伯利兹"
+          - "不丹"
+          - "布基纳法索"
+          - "布隆迪"
+          - "布韦岛"
+          - "赤道几内亚"
+          - "大阿拉伯利比亚"
+          - "丹麦"
+          - "德国"
+          - "东帝汶"
+          - "多哥"
+          - "多米尼加"
+          - "多米尼加共和国"
+          - "俄罗斯联邦"
+          - "厄瓜多尔"
+          - "厄立特里亚"
+          - "法国"
+          - "法罗群岛"
+          - "法属波利尼西亚"
+          - "法属圭亚那"
+          - "法属南部领地"
+          - "法属圣马丁"
+          - "菲律宾"
+          - "芬兰"
+          - "佛得角"
+          - "福克兰群岛"
+          - "冈比亚"
+          - "刚果"
+          - "刚果民主共和国"
+          - "哥伦比亚"
+          - "哥斯达黎加"
+          - "格恩西岛"
+          - "格林纳达"
+          - "格陵兰"
+          - "格鲁吉亚"
+          - "古巴"
+          - "瓜德罗普"
+          - "瓜地马拉"
+          - "关岛"
+          - "圭亚那"
+          - "哈萨克斯坦"
+          - "海地"
+          - "韩国"
+          - "荷兰"
+          - "荷属安的列斯群岛"
+          - "赫德岛和麦克唐纳群岛"
+          - "黑山"
+          - "洪都拉斯"
+          - "基里巴斯"
+          - "吉布提"
+          - "吉尔吉斯斯坦"
+          - "几内亚"
+          - "几内亚比绍"
+          - "加拿大"
+          - "加纳"
+          - "加蓬"
+          - "柬埔寨"
+          - "捷克共和国"
+          - "津巴布韦"
+          - "喀麦隆"
+          - "卡塔尔"
+          - "开曼群岛"
+          - "科科斯（基林）群岛"
+          - "科摩罗"
+          - "科特迪瓦"
+          - "科威特"
+          - "克罗地亚（当地名：Hrvatska）"
+          - "肯尼亚"
+          - "库克群岛"
+          - "拉脱维亚"
+          - "莱索托"
+          - "老挝人民民主共和国"
+          - "黎巴嫩"
+          - "利比里亚"
+          - "立陶宛"
+          - "列支敦士登"
+          - "留尼汪"
+          - "卢森堡"
+          - "卢旺达"
+          - "罗马尼亚"
+          - "马达加斯加"
+          - "马恩岛"
+          - "马耳他"
+          - "马尔代夫"
+          - "马拉维"
+          - "马来西亚"
+          - "马里"
+          - "马提尼克岛"
+          - "马歇尔群岛"
+          - "马约特岛"
+          - "毛里求斯"
+          - "毛里塔尼亚"
+          - "美国本土外小岛屿"
+          - "美属萨摩亚"
+          - "蒙古"
+          - "蒙塞拉特岛"
+          - "孟加拉"
+          - "秘鲁"
+          - "密克罗尼西亚联邦"
+          - "缅甸"
+          - "摩尔多瓦共和国"
+          - "摩洛哥"
+          - "摩纳哥"
+          - "莫桑比克"
+          - "墨西哥"
+          - "纳米比亚"
+          - "南非"
+          - "南极洲"
+          - "南乔治亚和南桑威奇群岛"
+          - "尼泊尔"
+          - "尼加拉瓜"
+          - "尼日尔"
+          - "尼日利亚"
+          - "纽埃"
+          - "挪威"
+          - "诺福克岛"
+          - "帕劳"
+          - "皮特凯恩群岛"
+          - "葡萄牙"
+          - "前南斯拉夫马其顿共和国"
+          - "日本"
+          - "瑞典"
+          - "瑞士"
+          - "萨尔瓦多"
+          - "萨摩亚"
+          - "塞尔维亚"
+          - "塞拉利昂"
+          - "塞内加尔"
+          - "塞浦路斯"
+          - "塞舌尔"
+          - "沙特阿拉伯"
+          - "圣巴泰勒米"
+          - "圣诞岛"
+          - "圣多美和普林西比"
+          - "圣赫勒拿岛"
+          - "圣基茨和尼维斯"
+          - "圣卢西亚"
+          - "圣马力诺"
+          - "圣皮埃尔和密克隆"
+          - "圣文森特和格林纳丁斯"
+          - "史瓦济兰"
+          - "斯里兰卡"
+          - "斯罗文尼亚"
+          - "斯洛伐克（斯洛伐克共和国）"
+          - "斯瓦巴和扬马延群岛"
+          - "苏丹"
+          - "苏里南"
+          - "索马里"
+          - "所罗门群岛"
+          - "塔吉克斯坦"
+          - "台湾"
+          - "泰国"
+          - "坦桑尼亚联合共和国"
+          - "汤加"
+          - "特克斯和凯科斯群岛"
+          - "特立尼达和多巴哥"
+          - "突尼斯"
+          - "图瓦卢"
+          - "土耳其"
+          - "土库曼尼斯坦"
+          - "托克劳"
+          - "瓦利斯和富图纳群岛"
+          - "瓦努阿图"
+          - "维京群岛（美属）"
+          - "维京群岛（英属）"
+          - "委内瑞拉"
+          - "文莱达鲁萨兰"
+          - "乌干达"
+          - "乌克兰"
+          - "乌拉圭"
+          - "乌兹别克斯坦"
+          - "西班牙"
+          - "西撒哈拉"
+          - "希腊"
+          - "香港"
+          - "新加坡"
+          - "新喀里多尼亚"
+          - "新西兰"
+          - "匈牙利"
+          - "牙买加"
+          - "亚美尼亚"
+          - "也门"
+          - "伊拉克"
+          - "伊朗伊斯兰共和国"
+          - "以色列"
+          - "意大利"
+          - "印度"
+          - "印度尼西亚"
+          - "英国"
+          - "英属印度洋领地"
+          - "约旦"
+          - "越南"
+          - "赞比亚"
+          - "泽西岛"
+          - "乍得"
+          - "直布罗陀"
+          - "智利"
+          - "中非共和国"
+          - "瑙鲁"
+          - "梵蒂冈城"
+          - "斐济"
       solver:
         description: "captcha solver"
         required: true
@@ -63,6 +312,8 @@ jobs:
     outputs:
       indices: ${{ steps.matrix.outputs.indices }}
       max_parallel: ${{ steps.matrix.outputs.max_parallel }}
+      country_code: ${{ steps.matrix.outputs.country_code }}
+      country_name: ${{ steps.matrix.outputs.country_name }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -72,6 +323,7 @@ jobs:
         env:
           REQUESTED_COUNT: ${{ inputs.count }}
           REQUESTED_MAX_PARALLEL: ${{ inputs.max_parallel }}
+          REQUESTED_COUNTRY: ${{ inputs.country }}
           NETWORK_MODE: ${{ inputs.network }}
           PROXY_FILE: ${{ inputs.proxy_file }}
           SOLVER_MODE: ${{ inputs.solver }}
@@ -100,6 +352,35 @@ jobs:
               "max_parallel", os.environ["REQUESTED_MAX_PARALLEL"], 20
           )
           max_parallel = min(requested_parallel, count, 20)
+          country_file = Path("country_codes.txt")
+          if not country_file.is_file():
+              raise SystemExit(f"country code file not found: {country_file}")
+          country_codes = {}
+          for line_number, raw_line in enumerate(
+              country_file.read_text(encoding="utf-8").splitlines(), start=1
+          ):
+              line = raw_line.strip()
+              if not line:
+                  continue
+              try:
+                  name, code = line.rsplit("----", 1)
+              except ValueError as exc:
+                  raise SystemExit(
+                      f"invalid country code row {line_number}: {raw_line!r}"
+                  ) from exc
+              name = name.strip()
+              code = code.strip().upper()
+              if not name or len(code) != 3 or not code.isalpha():
+                  raise SystemExit(
+                      f"invalid country mapping at row {line_number}: {raw_line!r}"
+                  )
+              if name in country_codes:
+                  raise SystemExit(f"duplicate country name: {name}")
+              country_codes[name] = code
+          country_name = os.environ["REQUESTED_COUNTRY"].strip()
+          country_code = country_codes.get(country_name)
+          if not country_code:
+              raise SystemExit(f"unsupported country selection: {country_name!r}")
           solver = os.environ["SOLVER_MODE"].strip().lower()
           browser = os.environ["BROWSER_MODE"].strip().lower()
           yescaptcha_key = os.environ.get("YESCAPTCHA_API_KEY", "").strip()
@@ -136,9 +417,12 @@ jobs:
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as fp:
               fp.write(f"indices={json.dumps(list(range(1, count + 1)))}\n")
               fp.write(f"max_parallel={max_parallel}\n")
+              fp.write(f"country_code={country_code}\n")
+              fp.write(f"country_name={country_name}\n")
           print(
               f"matrix size={count} max_parallel={max_parallel} "
-              f"solver={solver} browser={browser} network={network}"
+              f"solver={solver} browser={browser} network={network} "
+              f"country={country_name}({country_code})"
           )
           PY
 
@@ -375,6 +659,7 @@ jobs:
       - name: Run HTTP V5 registration
         env:
           V5_SOLVER: ${{ inputs.solver }}
+          V5_COUNTRY: ${{ needs.prepare.outputs.country_code }}
           RANK_V11_URL: http://127.0.0.1:8765
           YESCAPTCHA_API_KEY: ${{ secrets.YESCAPTCHA_API_KEY || inputs.yescaptcha_key }}
           CAPMONSTER_API_KEY: ${{ secrets.CAPMONSTER_API_KEY || inputs.capmonster_key }}
@@ -401,6 +686,7 @@ jobs:
               .venv/bin/python register_ruyipage_v5.py \
                 --solver "${{ inputs.solver }}" \
                 --browser "${{ inputs.browser }}" \
+                --country "$V5_COUNTRY" \
                 --proxy "$REGISTRATION_PROXY" \
                 --country-probe \
                 --headless \

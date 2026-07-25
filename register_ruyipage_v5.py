@@ -34,7 +34,7 @@ from v5_cloak_adapter import (
 LOG = logging.getLogger("http_register_v5")
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "ruyipage_http_v5_register" / "runs"
-REGISTRATION_COUNTRY = "GBR"
+DEFAULT_REGISTRATION_COUNTRY = "USA"
 DEFAULT_YESCAPTCHA_API_URL = "https://api.yescaptcha.com/createTask"
 DEFAULT_CAPMONSTER_CREATE_URL = "https://api.capmonster.cloud/createTask"
 DEFAULT_CAPMONSTER_RESULT_URL = "https://api.capmonster.cloud/getTaskResult"
@@ -101,6 +101,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("V5_BROWSER", "ruyipage").lower(),
     )
     parser.add_argument(
+        "--country",
+        default=os.environ.get("V5_COUNTRY", DEFAULT_REGISTRATION_COUNTRY),
+        help="ISO 3166-1 alpha-3 registration country code (default: USA)",
+    )
+    parser.add_argument(
         "--yescaptcha-key",
         default=os.environ.get("YESCAPTCHA_API_KEY", ""),
     )
@@ -130,6 +135,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def validate_configuration(args: argparse.Namespace) -> dict[str, Any]:
+    registration_country = str(args.country or "").strip().upper()
+    if len(registration_country) != 3 or not registration_country.isalpha():
+        raise ValueError(
+            "--country must be a three-letter ISO country code, "
+            f"got {args.country!r}"
+        )
     if args.solver == "yescaptcha" and not str(args.yescaptcha_key).strip():
         raise ValueError(
             "YESCAPTCHA_API_KEY is required when --solver yescaptcha is selected"
@@ -145,6 +156,7 @@ def validate_configuration(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "solver": args.solver,
         "browser": args.browser,
+        "registrationCountry": registration_country,
         "browserRequired": args.solver in {"v11", "yescaptcha"},
         "apiKeyConfigured": (
             True
@@ -828,6 +840,7 @@ def main() -> int:
     args = build_parser().parse_args()
     v4.configure_v3_clicks(args)
     config = validate_configuration(args)
+    registration_country = str(config["registrationCountry"])
     resume_path = resolve_resume_path(args.resume) if args.resume else None
     out = (
         resume_path.parent
@@ -850,6 +863,13 @@ def main() -> int:
         proxy = v4.parse_proxy(args.proxy)
         if resume_path is not None:
             state = PersistentFlowState.load(resume_path)
+            saved_profile = dict(state.data.get("profile") or {})
+            saved_country = str(
+                saved_profile.get("registrationCountry") or ""
+            ).strip().upper()
+            if saved_country:
+                registration_country = saved_country
+                config["registrationCountry"] = saved_country
             identity = {
                 key: str(value)
                 for key, value in dict(state.data.get("identity") or {}).items()
@@ -870,7 +890,7 @@ def main() -> int:
                     "mode": "persistent-http-v5",
                     "solver": args.solver,
                     "browser": args.browser,
-                    "registrationCountry": REGISTRATION_COUNTRY,
+                    "registrationCountry": registration_country,
                     "countryProbe": bool(args.country_probe),
                     "proxy": proxy.summary(),
                     "proxyTrafficMeter": bool(proxy.enabled),
@@ -891,7 +911,7 @@ def main() -> int:
             args.browser,
             args.solver,
         )
-        LOG.info("Registration country: %s (fixed)", REGISTRATION_COUNTRY)
+        LOG.info("Registration country: %s", registration_country)
         LOG.info("Proxy route: %s auth=%s", proxy.display, proxy.has_auth)
         LOG.info("Account: %s", identity["email"])
         LOG.info("BattleTag: %s", identity["battle_tag"])
@@ -928,7 +948,7 @@ def main() -> int:
         )
         if state.data.get("status") not in {"captcha-gate", "token-ready"}:
             client.run_to_captcha(
-                country=REGISTRATION_COUNTRY,
+                country=registration_country,
                 opt_in=False,
                 country_probe=bool(args.country_probe),
             )
@@ -1020,7 +1040,7 @@ def main() -> int:
                 "mode": "persistent-http-v5",
                 "solver": args.solver,
                 "browser": args.browser,
-                "registrationCountry": REGISTRATION_COUNTRY,
+                "registrationCountry": registration_country,
                 "countryProbe": bool(args.country_probe),
                 "proxy": proxy.summary(),
                 "arkose": v4.public_arkose_context(arkose),
@@ -1072,7 +1092,7 @@ def main() -> int:
             "outputDir": str(out),
             "solver": args.solver,
             "browser": args.browser,
-            "registrationCountry": REGISTRATION_COUNTRY,
+            "registrationCountry": registration_country,
             "countryProbe": bool(args.country_probe),
             "proxy": proxy.summary(),
             "elapsedSeconds": time.perf_counter() - started,

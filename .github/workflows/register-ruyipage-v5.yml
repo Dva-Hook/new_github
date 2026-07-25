@@ -369,6 +369,16 @@ jobs:
           restore-keys: |
             http-v5-public-static-v1-
 
+      - name: 恢复邮箱验证浏览器静态缓存
+        if: needs.prepare.outputs.email_source == 'pool'
+        id: email-browser-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: .cache/v5_email_browser_profile
+          key: v5-email-browser-profile-v1-${{ github.run_id }}
+          restore-keys: |
+            v5-email-browser-profile-v1-
+
       - name: 修复缺失的缓存依赖
         if: steps.venv.outputs.cache-hit != 'true' || steps.ruyi-runtime.outputs.cache-hit != 'true' || (needs.prepare.outputs.browser == 'cloakbrowser' && steps.cloak-runtime.outputs.cache-hit != 'true')
         env:
@@ -464,10 +474,11 @@ jobs:
           YESCAPTCHA_API_KEY: ${{ secrets.YESCAPTCHA_API_KEY || inputs.yescaptcha_key }}
           CAPMONSTER_API_KEY: ${{ secrets.CAPMONSTER_API_KEY || inputs.capmonster_key }}
           V5_STATIC_CACHE_DIR: ${{ github.workspace }}/.cache/v5_public_static
+          V5_EMAIL_BROWSER_CACHE_DIR: ${{ github.workspace }}/.cache/v5_email_browser_profile
           PYTHONUNBUFFERED: "1"
         run: |
           set +e
-          mkdir -p "$V5_STATIC_CACHE_DIR"
+          mkdir -p "$V5_STATIC_CACHE_DIR" "$V5_EMAIL_BROWSER_CACHE_DIR"
           solver_click_args=(
             --click-style balanced
             --verify-timeout 35
@@ -495,6 +506,7 @@ jobs:
                 --headless \
                 "${solver_click_args[@]}" \
                 --static-cache-dir "$V5_STATIC_CACHE_DIR" \
+                --email-browser-cache-dir "$V5_EMAIL_BROWSER_CACHE_DIR" \
                 --rank-v11-url "$RANK_V11_URL"
             last_rc=$?
             echo "V5 第 ${attempt}/3 次尝试退出码：${last_rc}"
@@ -518,6 +530,32 @@ jobs:
         with:
           path: .cache/v5_public_static
           key: http-v5-public-static-v1-${{ github.run_id }}
+
+      - name: 保存前清理邮箱验证浏览器身份状态
+        if: always() && needs.prepare.outputs.email_source == 'pool'
+        id: sanitize-email-browser-cache
+        env:
+          V5_EMAIL_BROWSER_CACHE_DIR: ${{ github.workspace }}/.cache/v5_email_browser_profile
+        run: |
+          .venv/bin/python - <<'PY'
+          import os
+          from pathlib import Path
+          from v5_email_verifier import sanitize_cached_profile
+
+          cache_dir = Path(os.environ["V5_EMAIL_BROWSER_CACHE_DIR"])
+          removed = sanitize_cached_profile(cache_dir)
+          print(
+              f"邮箱验证缓存清理完成：removed={len(removed)} "
+              f"cache2={(cache_dir / 'cache2').exists()}"
+          )
+          PY
+
+      - name: 保存邮箱验证浏览器静态缓存
+        if: always() && matrix.index == 1 && needs.prepare.outputs.email_source == 'pool' && steps.sanitize-email-browser-cache.outcome == 'success'
+        uses: actions/cache/save@v5
+        with:
+          path: .cache/v5_email_browser_profile
+          key: v5-email-browser-profile-v1-${{ github.run_id }}
 
       - name: 停止本地 V11 服务
         if: always() && needs.prepare.outputs.solver == 'v11'

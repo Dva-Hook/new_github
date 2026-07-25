@@ -7,6 +7,7 @@ import contextlib
 import html
 import logging
 import re
+import shutil
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -29,6 +30,169 @@ TOKEN_ENDPOINTS = (
 )
 MESSAGES_URL = "https://graph.microsoft.com/v1.0/me/messages"
 URL_PATTERN = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+DEFAULT_EMAIL_BROWSER_CACHE_DIR = (
+    Path(__file__).resolve().parent / ".cache" / "v5_email_browser_profile"
+)
+PROFILE_MARKER_NAME = ".v5_email_verification_profile"
+
+
+def sanitize_cached_profile(
+    cache_dir: Path,
+    *,
+    lock_timeout: float = 15.0,
+    poll_interval: float = 0.2,
+) -> list[str]:
+    """Remove account identity state while preserving Firefox HTTP cache2."""
+
+    cache_dir = cache_dir.expanduser().resolve()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    marker = cache_dir / PROFILE_MARKER_NAME
+    existing_entries = list(cache_dir.iterdir())
+    if (
+        existing_entries
+        and not marker.is_file()
+        and cache_dir != DEFAULT_EMAIL_BROWSER_CACHE_DIR.resolve()
+    ):
+        raise RuntimeError(
+            f"自定义邮箱验证缓存目录已有文件且不是 V5 管理的 profile: {cache_dir}"
+        )
+    if not marker.is_file():
+        marker.write_text(
+            "managed V5 email verification profile; keep cache2, clear identity state\n",
+            encoding="ascii",
+        )
+
+    lock_path = cache_dir / "parent.lock"
+    lock_deadline = time.monotonic() + max(0.0, float(lock_timeout))
+    while lock_path.exists() or lock_path.is_symlink():
+        try:
+            lock_path.unlink()
+        except PermissionError as exc:
+            if time.monotonic() >= lock_deadline:
+                raise RuntimeError(
+                    f"邮箱验证缓存 profile 仍被浏览器占用: {cache_dir}"
+                ) from exc
+            time.sleep(max(0.0, float(poll_interval)))
+
+    identity_paths = (
+        "cookies.sqlite",
+        "cookies.sqlite-shm",
+        "cookies.sqlite-wal",
+        "webappsstore.sqlite",
+        "webappsstore.sqlite-shm",
+        "webappsstore.sqlite-wal",
+        "storage.sqlite",
+        "storage.sqlite-shm",
+        "storage.sqlite-wal",
+        "formhistory.sqlite",
+        "formhistory.sqlite-shm",
+        "formhistory.sqlite-wal",
+        "credentialstate.sqlite",
+        "credentialstate.sqlite-shm",
+        "credentialstate.sqlite-wal",
+        "logins.json",
+        "logins.db",
+        "logins.db-shm",
+        "logins.db-wal",
+        "sessionCheckpoints.json",
+        "sessionstore.jsonlz4",
+        "sessionstore-backups",
+        "sessionstore-logs",
+        str(Path("storage") / "default"),
+        str(Path("storage") / "temporary"),
+        str(Path("storage") / "ls-archive.sqlite"),
+    )
+    removed: list[str] = []
+    for relative_path in identity_paths:
+        path = cache_dir / relative_path
+        existed = path.exists() or path.is_symlink()
+        removal_deadline = time.monotonic() + max(0.0, float(lock_timeout))
+        while path.exists() or path.is_symlink():
+            try:
+                if path.is_dir() and not path.is_symlink():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+            except PermissionError as exc:
+                if time.monotonic() >= removal_deadline:
+                    raise RuntimeError(
+                        f"邮箱验证缓存 profile 的身份状态仍被浏览器占用: {path}"
+                    ) from exc
+                time.sleep(max(0.0, float(poll_interval)))
+        if existed:
+            removed.append(relative_path)
+    return removed
+
+
+def launch_cached_ruyi_browser(
+    args: Any,
+    proxy: Any,
+    runtime_proxy_url: Optional[str],
+    output_dir: Path,
+) -> tuple[Any, Path]:
+    """Launch the email verifier with a sanitized, reusable Firefox profile."""
+
+    try:
+        import ruyipage
+    except ImportError as exc:
+        raise RuntimeError(
+            "缺少 ruyipage；运行 python -m pip install ruyiPage --upgrade，"
+            "然后运行 python -m ruyipage install"
+        ) from exc
+
+    cache_dir = Path(
+        getattr(args, "email_browser_cache_dir", DEFAULT_EMAIL_BROWSER_CACHE_DIR)
+    ).expanduser().resolve()
+    removed = sanitize_cached_profile(cache_dir)
+    LOG.info(
+        "邮箱验证浏览器 profile 已就绪: cache=%s identityRemoved=%d cache2=%s",
+        cache_dir,
+        len(removed),
+        (cache_dir / "cache2").exists(),
+    )
+
+    snapshot_dir = output_dir / "email_verification_snapshots"
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    launch_proxy = runtime_proxy_url if runtime_proxy_url is not None else proxy.url
+    try:
+        page = ruyipage.launch(
+            headless=bool(args.headless),
+            private=False,
+            user_dir=str(cache_dir),
+            proxy=launch_proxy,
+            window_size=(1920, 1080),
+            timeout_page_load=60,
+            timeout_script=60,
+            close_on_exit=True,
+            failure_snapshot=True,
+            snapshot_dir=str(snapshot_dir),
+        )
+    except Exception:
+        with contextlib.suppress(Exception):
+            sanitize_cached_profile(cache_dir)
+        raise
+    with contextlib.suppress(Exception):
+        page.close_other_tabs()
+    with contextlib.suppress(Exception):
+        page.set_bypass_csp(True)
+    return page, cache_dir
+
+
+def close_cached_ruyi_browser(page: Any, cache_dir: Path) -> None:
+    """Close Firefox, then strip identity databases before persisting its cache."""
+
+    try:
+        try:
+            page.quit(timeout=10, force=True)
+        except TypeError:
+            page.quit()
+    finally:
+        removed = sanitize_cached_profile(cache_dir)
+        LOG.info(
+            "邮箱验证浏览器已关闭并清理身份状态: removed=%d cache2=%s",
+            len(removed),
+            (cache_dir / "cache2").exists(),
+        )
 
 
 NAVIGATION_STATE_JS = r"""return (() => {
@@ -653,12 +817,16 @@ def verify_registered_email(
     output_dir: Path,
     not_before: datetime,
 ) -> EmailVerificationResult:
-    import register_ruyipage_v4 as v4
-
     page: Any = None
+    cache_dir: Optional[Path] = None
     try:
         LOG.info("启动 RuyiPage 执行注册邮箱验证: %s", credential.email)
-        page = v4.launch_ruyi_browser(args, proxy, runtime_proxy_url)
+        page, cache_dir = launch_cached_ruyi_browser(
+            args,
+            proxy,
+            runtime_proxy_url,
+            output_dir,
+        )
         login_result = login_battle_net(
             page,
             credential.email,
@@ -707,16 +875,22 @@ def verify_registered_email(
     finally:
         if page is not None:
             with contextlib.suppress(Exception):
-                page.quit()
+                close_cached_ruyi_browser(page, cache_dir or DEFAULT_EMAIL_BROWSER_CACHE_DIR)
+        elif cache_dir is not None:
+            with contextlib.suppress(Exception):
+                sanitize_cached_profile(cache_dir)
 
 
 __all__ = [
     "EmailVerificationResult",
+    "close_cached_ruyi_browser",
     "direct_battlenet_link",
     "extract_battlenet_link",
     "find_link",
     "get_access_token",
+    "launch_cached_ruyi_browser",
     "login_battle_net",
     "poll_verification_link",
+    "sanitize_cached_profile",
     "verify_registered_email",
 ]

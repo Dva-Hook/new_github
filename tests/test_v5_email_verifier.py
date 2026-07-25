@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+import sys
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from v5_email_verifier import (
     _wait_login_phase,
+    close_cached_ruyi_browser,
     direct_battlenet_link,
     extract_battlenet_link,
     find_link,
     is_login_success_state,
+    launch_cached_ruyi_browser,
+    sanitize_cached_profile,
 )
 
 
@@ -45,6 +53,98 @@ class FakeLoginPage:
 
 
 class EmailVerifierTests(unittest.TestCase):
+    def test_cached_browser_lifecycle_starts_clean_and_finishes_clean(self) -> None:
+        with TemporaryDirectory() as raw_dir:
+            cache_dir = Path(raw_dir) / "managed-profile"
+            cache_dir.mkdir()
+            (cache_dir / ".v5_email_verification_profile").write_text(
+                "managed\n", encoding="ascii"
+            )
+            (cache_dir / "cache2").mkdir()
+            (cache_dir / "cache2" / "static.bin").write_bytes(b"static")
+            (cache_dir / "cookies.sqlite").write_bytes(b"old-account")
+            launch_options: dict = {}
+
+            class FakePage:
+                def close_other_tabs(self) -> None:
+                    return None
+
+                def set_bypass_csp(self, _enabled: bool) -> None:
+                    return None
+
+                def quit(self, **_kwargs) -> None:
+                    (cache_dir / "cookies.sqlite").write_bytes(b"new-account")
+                    (cache_dir / "storage" / "default").mkdir(parents=True)
+
+            def fake_launch(**kwargs):
+                launch_options.update(kwargs)
+                self.assertFalse((cache_dir / "cookies.sqlite").exists())
+                self.assertTrue((cache_dir / "cache2" / "static.bin").exists())
+                return FakePage()
+
+            fake_module = SimpleNamespace(launch=fake_launch)
+            args = SimpleNamespace(
+                email_browser_cache_dir=str(cache_dir),
+                headless=True,
+            )
+            proxy = SimpleNamespace(url=None)
+            with patch.dict(sys.modules, {"ruyipage": fake_module}):
+                page, actual_cache_dir = launch_cached_ruyi_browser(
+                    args, proxy, None, Path(raw_dir) / "run"
+                )
+
+            self.assertEqual(actual_cache_dir, cache_dir.resolve())
+            self.assertEqual(launch_options["user_dir"], str(cache_dir.resolve()))
+            self.assertFalse(launch_options["private"])
+            close_cached_ruyi_browser(page, actual_cache_dir)
+            self.assertFalse((cache_dir / "cookies.sqlite").exists())
+            self.assertFalse((cache_dir / "storage" / "default").exists())
+            self.assertTrue((cache_dir / "cache2" / "static.bin").exists())
+
+    def test_profile_sanitizer_preserves_cache2_and_removes_identity_state(self) -> None:
+        with TemporaryDirectory() as raw_dir:
+            cache_dir = Path(raw_dir) / "managed-profile"
+            cache_dir.mkdir()
+            (cache_dir / ".v5_email_verification_profile").write_text(
+                "managed\n", encoding="ascii"
+            )
+            (cache_dir / "cache2" / "entries").mkdir(parents=True)
+            (cache_dir / "cache2" / "entries" / "static.bin").write_bytes(b"static")
+            (cache_dir / "cookies.sqlite").write_bytes(b"cookie")
+            (cache_dir / "logins.json").write_text("{}", encoding="utf-8")
+            (cache_dir / "sessionstore-backups").mkdir()
+            (cache_dir / "sessionstore-backups" / "previous.jsonlz4").write_bytes(
+                b"session"
+            )
+            (cache_dir / "storage" / "default" / "account.example").mkdir(
+                parents=True
+            )
+            (cache_dir / "storage" / "default" / "account.example" / "state").write_bytes(
+                b"identity"
+            )
+            (cache_dir / "parent.lock").write_text("stale", encoding="ascii")
+
+            removed = sanitize_cached_profile(cache_dir, lock_timeout=0)
+
+            self.assertTrue((cache_dir / "cache2" / "entries" / "static.bin").is_file())
+            self.assertFalse((cache_dir / "cookies.sqlite").exists())
+            self.assertFalse((cache_dir / "logins.json").exists())
+            self.assertFalse((cache_dir / "sessionstore-backups").exists())
+            self.assertFalse((cache_dir / "storage" / "default").exists())
+            self.assertFalse((cache_dir / "parent.lock").exists())
+            self.assertIn("cookies.sqlite", removed)
+            self.assertIn(str(Path("storage") / "default"), removed)
+
+            self.assertEqual(sanitize_cached_profile(cache_dir, lock_timeout=0), [])
+
+    def test_profile_sanitizer_rejects_unmanaged_nonempty_custom_directory(self) -> None:
+        with TemporaryDirectory() as raw_dir:
+            cache_dir = Path(raw_dir) / "unmanaged-profile"
+            cache_dir.mkdir()
+            (cache_dir / "keep.txt").write_text("unmanaged", encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                sanitize_cached_profile(cache_dir, lock_timeout=0)
+
     def test_post_password_wait_ignores_visible_password_until_success(self) -> None:
         page = FakeLoginPage(
             [

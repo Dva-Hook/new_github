@@ -126,6 +126,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--email-mail-timeout", type=float, default=120.0)
     parser.add_argument("--email-verification-timeout", type=float, default=20.0)
     parser.add_argument(
+        "--email-browser-cache-dir",
+        default=os.environ.get(
+            "V5_EMAIL_BROWSER_CACHE_DIR",
+            str(PROJECT_ROOT / ".cache" / "v5_email_browser_profile"),
+        ),
+        help=(
+            "RuyiPage Firefox profile cache for supplied-email verification; "
+            "identity state is removed before and after every use"
+        ),
+    )
+    parser.add_argument(
         "--yescaptcha-key",
         default=os.environ.get("YESCAPTCHA_API_KEY", ""),
     )

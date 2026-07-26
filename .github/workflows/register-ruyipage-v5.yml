@@ -736,7 +736,7 @@ jobs:
       - name: 上传 V5 汇总结果
         uses: actions/upload-artifact@v6
         with:
-          name: all-V5-全部成功账号
+          name: ALL-V5-全部成功账号
           path: |
             all_accounts.txt
             successful_emails.txt

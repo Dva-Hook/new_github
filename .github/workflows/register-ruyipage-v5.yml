@@ -11,7 +11,7 @@ on:
       max_parallel:
         description: "最大并发数量（1-20）"
         required: true
-        default: "10"
+        default: "20"
         type: string
       country_code:
         description: "注册国家代码（例如 USA、GBR、CAN）"
@@ -21,7 +21,7 @@ on:
       solver:
         description: "验证码求解方式"
         required: true
-        default: "本地 V11"
+        default: "CapMonster"
         type: choice
         options:
           - "本地 V11"
@@ -48,7 +48,7 @@ on:
       network:
         description: "注册网络线路"
         required: true
-        default: "直连"
+        default: "代理"
         type: choice
         options:
           - "直连"
@@ -61,7 +61,7 @@ on:
       email_source:
         description: "注册邮箱来源"
         required: true
-        default: "虚拟邮箱"
+        default: "待注册邮箱"
         type: choice
         options:
           - "虚拟邮箱"

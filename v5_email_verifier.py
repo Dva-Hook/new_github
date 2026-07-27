@@ -19,6 +19,7 @@ from urllib.parse import parse_qs, urlsplit
 import requests
 
 from v5_email_pool import EmailCredential
+from v5_resource_policy import install_ruyi_tracking_filter
 
 
 LOG = logging.getLogger("http_register_v5.email_verifier")
@@ -175,6 +176,8 @@ def launch_cached_ruyi_browser(
         page.close_other_tabs()
     with contextlib.suppress(Exception):
         page.set_bypass_csp(True)
+    if not bool(getattr(args, "no_resource_blocking", False)):
+        install_ruyi_tracking_filter(page, LOG)
     return page, cache_dir
 
 

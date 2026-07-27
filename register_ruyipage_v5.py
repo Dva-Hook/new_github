@@ -31,6 +31,7 @@ from v5_cloak_adapter import (
 )
 from v5_email_pool import EmailCredential, select_email_credential
 from v5_email_verifier import EmailVerificationResult, verify_registered_email
+from v5_resource_policy import should_block_tracking_resource
 
 
 LOG = logging.getLogger("http_register_v5")
@@ -356,7 +357,11 @@ def _install_cloak_resource_filter(page: Any, enabled: bool) -> None:
     def route_handler(route: Any, request: Any) -> None:
         url = str(getattr(request, "url", "") or "")
         resource_type = str(getattr(request, "resource_type", "") or "")
-        if resource_type in {"font", "media"} or v4.should_block_resource(url):
+        if (
+            resource_type in {"font", "media"}
+            or v4.should_block_resource(url)
+            or should_block_tracking_resource(url)
+        ):
             route.abort()
         else:
             route.continue_()
@@ -723,7 +728,10 @@ def _launch_solver_browser(
             block_nonessential=not args.no_resource_blocking,
             fetch_timeout=args.static_fetch_timeout,
             max_entry_bytes=max(1, int(args.static_cache_max_entry_mib * v4.MIB)),
-            should_block=v4.should_block_resource,
+            should_block=lambda url: (
+                v4.should_block_resource(url)
+                or should_block_tracking_resource(url)
+            ),
         )
         optimizer.start()
         return page, catcher, optimizer

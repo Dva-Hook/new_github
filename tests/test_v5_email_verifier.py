@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sys
 import unittest
 from datetime import datetime, timezone
@@ -17,6 +18,10 @@ from v5_email_verifier import (
     is_login_success_state,
     launch_cached_ruyi_browser,
     sanitize_cached_profile,
+)
+from v5_resource_policy import (
+    install_ruyi_tracking_filter,
+    should_block_tracking_resource,
 )
 
 
@@ -53,6 +58,57 @@ class FakeLoginPage:
 
 
 class EmailVerifierTests(unittest.TestCase):
+    def test_tracking_policy_blocks_known_trackers_but_keeps_forge(self) -> None:
+        for url in (
+            "https://www.googletagmanager.com/gtm.js?id=GTM-TEST",
+            "https://www.google-analytics.com/g/collect",
+            "https://stats.g.doubleclick.net/j/collect",
+            "https://rum.battle.net/api/v1/collect",
+        ):
+            with self.subTest(url=url):
+                self.assertTrue(should_block_tracking_resource(url))
+
+        self.assertFalse(
+            should_block_tracking_resource("https://forge.akamaized.net/app.js")
+        )
+        self.assertFalse(
+            should_block_tracking_resource(
+                "https://blizzard-api.arkoselabs.com/fc/gc/"
+            )
+        )
+
+    def test_ruyi_tracking_filter_fails_only_matching_requests(self) -> None:
+        installed: dict[str, object] = {}
+
+        class FakeIntercept:
+            def start_requests(self, handler) -> None:
+                installed["handler"] = handler
+
+        class FakePage:
+            intercept = FakeIntercept()
+
+        class FakeRequest:
+            def __init__(self, url: str) -> None:
+                self.url = url
+                self.action = ""
+
+            def fail(self) -> None:
+                self.action = "fail"
+
+            def continue_request(self) -> None:
+                self.action = "continue"
+
+        self.assertTrue(install_ruyi_tracking_filter(FakePage(), logging.getLogger()))
+        handler = installed["handler"]
+
+        blocked = FakeRequest("https://www.googletagmanager.com/gtm.js")
+        handler(blocked)
+        self.assertEqual(blocked.action, "fail")
+
+        allowed = FakeRequest("https://forge.akamaized.net/app.js")
+        handler(allowed)
+        self.assertEqual(allowed.action, "continue")
+
     def test_cached_browser_lifecycle_starts_clean_and_finishes_clean(self) -> None:
         with TemporaryDirectory() as raw_dir:
             cache_dir = Path(raw_dir) / "managed-profile"
@@ -65,7 +121,13 @@ class EmailVerifierTests(unittest.TestCase):
             (cache_dir / "cookies.sqlite").write_bytes(b"old-account")
             launch_options: dict = {}
 
+            class FakeIntercept:
+                def start_requests(self, handler) -> None:
+                    launch_options["request_filter"] = handler
+
             class FakePage:
+                intercept = FakeIntercept()
+
                 def close_other_tabs(self) -> None:
                     return None
 
@@ -96,6 +158,7 @@ class EmailVerifierTests(unittest.TestCase):
             self.assertEqual(actual_cache_dir, cache_dir.resolve())
             self.assertEqual(launch_options["user_dir"], str(cache_dir.resolve()))
             self.assertFalse(launch_options["private"])
+            self.assertIn("request_filter", launch_options)
             close_cached_ruyi_browser(page, actual_cache_dir)
             self.assertFalse((cache_dir / "cookies.sqlite").exists())
             self.assertFalse((cache_dir / "storage" / "default").exists())

@@ -15,6 +15,8 @@ registration network route.
   secret takes precedence
 - `capmonster_key`: optional manual key; the `CAPMONSTER_API_KEY` repository
   secret takes precedence
+- `capmonster_proxy`: whether the current registration proxy is included in the
+  CapMonster task; defaults to `proxy` and only affects `solver=capmonster`
 - `browser`: `ruyipage` or `cloakbrowser`
 - `network`: `direct` or `proxy`
 - `proxy_file`: repository-relative proxy pool path, default `IP.txt`
@@ -46,6 +48,14 @@ GitHub log masking is enabled.
 
 With `network=direct`, `IP.txt` is not read and the GitHub runner route is used.
 
+When registration uses a proxy, V5 routes the public static hosts
+`blz-contentstack-assets.akamaized.net` and `forge.akamaized.net` directly from
+the GitHub runner. Battle.net identity, OAuth, Arkose, and other session traffic
+continues through the selected per-job proxy. The proxy report keeps upstream
+bytes in `totalMiB` and records direct traffic separately under `directBypass`.
+Set `V5_PROXY_DIRECT_HOSTS` or `--proxy-direct-hosts` to override the exact
+comma-separated static host list; an empty value disables split routing.
+
 ## Solver behavior
 
 - `v11`: opens the selected browser, captures Arkose challenge images, calls the
@@ -58,8 +68,11 @@ With `network=direct`, `IP.txt` is not read and the GitHub runner route is used.
   RuyiPage baseline of balanced native clicks with a random `250..600ms` gap
   between arrow clicks. CloakBrowser keeps its existing adapter click path.
 - `capmonster`: sends the HTTP-captured Arkose context to CapMonster and receives
-  the completed token directly. With `network=proxy`, the same per-job proxy is
-  included in the CapMonster task; direct mode uses CapMonster's built-in proxy.
+  the completed token directly. With `capmonster_proxy=proxy` and
+  `network=proxy`, the same per-job proxy is included in a `FunCaptchaTask`.
+  Selecting `capmonster_proxy=proxyless` uses `FunCaptchaTaskProxyless` even when
+  registration uses a proxy. Direct registration automatically falls back to
+  proxyless because no per-job proxy exists to pass.
   The protocol session and CapMonster task share the current Windows Chrome 150
   user agent by default (`V5_USER_AGENT` or `--protocol-user-agent` overrides it).
   No solver browser is needed in this branch.

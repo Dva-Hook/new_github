@@ -37,6 +37,14 @@ on:
         required: false
         default: ""
         type: string
+      capmonster_proxy:
+        description: "是否把当前注册代理传给 CapMonster（仅 CapMonster 生效）"
+        required: true
+        default: "传代理"
+        type: choice
+        options:
+          - "传代理"
+          - "不传代理"
       browser:
         description: "Arkose 求解浏览器"
         required: true
@@ -83,6 +91,7 @@ jobs:
       country_code: ${{ steps.matrix.outputs.country_code }}
       country_name: ${{ steps.matrix.outputs.country_name }}
       solver: ${{ steps.matrix.outputs.solver }}
+      capmonster_proxy_mode: ${{ steps.matrix.outputs.capmonster_proxy_mode }}
       browser: ${{ steps.matrix.outputs.browser }}
       network: ${{ steps.matrix.outputs.network }}
       email_source: ${{ steps.matrix.outputs.email_source }}
@@ -99,6 +108,7 @@ jobs:
           NETWORK_MODE_LABEL: ${{ inputs.network }}
           PROXY_FILE: ${{ inputs.proxy_file }}
           SOLVER_MODE_LABEL: ${{ inputs.solver }}
+          CAPMONSTER_PROXY_MODE_LABEL: ${{ inputs.capmonster_proxy }}
           BROWSER_MODE_LABEL: ${{ inputs.browser }}
           EMAIL_SOURCE_LABEL: ${{ inputs.email_source }}
           EMAIL_POOL_FILE: "Email_registing.txt"
@@ -166,9 +176,13 @@ jobs:
           }
           browser_map = {"RuyiPage": "ruyipage", "CloakBrowser": "cloakbrowser"}
           network_map = {"直连": "direct", "代理": "proxy"}
+          capmonster_proxy_map = {"传代理": "proxy", "不传代理": "proxyless"}
           email_source_map = {"虚拟邮箱": "generated", "待注册邮箱": "pool"}
           try:
               solver = solver_map[os.environ["SOLVER_MODE_LABEL"].strip()]
+              capmonster_proxy_mode = capmonster_proxy_map[
+                  os.environ["CAPMONSTER_PROXY_MODE_LABEL"].strip()
+              ]
               browser = browser_map[os.environ["BROWSER_MODE_LABEL"].strip()]
               network = network_map[os.environ["NETWORK_MODE_LABEL"].strip()]
               email_source = email_source_map[os.environ["EMAIL_SOURCE_LABEL"].strip()]
@@ -209,12 +223,14 @@ jobs:
               fp.write(f"country_code={country_code}\n")
               fp.write(f"country_name={country_name}\n")
               fp.write(f"solver={solver}\n")
+              fp.write(f"capmonster_proxy_mode={capmonster_proxy_mode}\n")
               fp.write(f"browser={browser}\n")
               fp.write(f"network={network}\n")
               fp.write(f"email_source={email_source}\n")
           print(
               f"任务数={count} 最大并发={max_parallel} "
               f"求解={os.environ['SOLVER_MODE_LABEL']} "
+              f"CapMonster代理={os.environ['CAPMONSTER_PROXY_MODE_LABEL']} "
               f"浏览器={os.environ['BROWSER_MODE_LABEL']} "
               f"网络={os.environ['NETWORK_MODE_LABEL']} "
               f"邮箱来源={os.environ['EMAIL_SOURCE_LABEL']} "
@@ -473,6 +489,7 @@ jobs:
           RANK_V11_URL: http://127.0.0.1:8765
           YESCAPTCHA_API_KEY: ${{ secrets.YESCAPTCHA_API_KEY || inputs.yescaptcha_key }}
           CAPMONSTER_API_KEY: ${{ secrets.CAPMONSTER_API_KEY || inputs.capmonster_key }}
+          V5_CAPMONSTER_PROXY_MODE: ${{ needs.prepare.outputs.capmonster_proxy_mode }}
           V5_STATIC_CACHE_DIR: ${{ github.workspace }}/.cache/v5_public_static
           V5_EMAIL_BROWSER_CACHE_DIR: ${{ github.workspace }}/.cache/v5_email_browser_profile
           PYTHONUNBUFFERED: "1"
@@ -496,6 +513,7 @@ jobs:
             xvfb-run -a --server-args="-screen 0 1920x1080x24" \
               .venv/bin/python register_ruyipage_v5.py \
                 --solver "$V5_SOLVER" \
+                --capmonster-proxy-mode "$V5_CAPMONSTER_PROXY_MODE" \
                 --browser "$V5_BROWSER" \
                 --country "$V5_COUNTRY" \
                 --email-source "$V5_EMAIL_SOURCE" \

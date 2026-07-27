@@ -10,7 +10,7 @@ import ssl
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 from urllib.parse import unquote, urlsplit, urlunsplit
 
 
@@ -68,12 +68,25 @@ class TrafficCounters:
         self.failures = 0
         self.errors: list[str] = []
         self.targets: dict[str, dict[str, int]] = {}
+        self.direct_upload_bytes = 0
+        self.direct_download_bytes = 0
+        self.direct_connections = 0
+        self.direct_active_connections = 0
+        self.direct_failures = 0
+        self.direct_errors: list[str] = []
+        self.direct_targets: dict[str, dict[str, int]] = {}
         self._lock = threading.Lock()
         self._idle = threading.Condition(self._lock)
 
-    def _target_locked(self, target: str) -> dict[str, int]:
+    def _target_locked(
+        self,
+        target: str,
+        *,
+        direct: bool = False,
+    ) -> dict[str, int]:
         key = str(target or "unclassified")
-        return self.targets.setdefault(
+        targets = self.direct_targets if direct else self.targets
+        return targets.setdefault(
             key,
             {
                 "uploadBytes": 0,
@@ -96,6 +109,18 @@ class TrafficCounters:
                 self.download_bytes += int(size)
                 self._target_locked(target)["downloadBytes"] += int(size)
 
+    def add_direct_upload(self, size: int, target: str = "unclassified") -> None:
+        if size > 0:
+            with self._lock:
+                self.direct_upload_bytes += int(size)
+                self._target_locked(target, direct=True)["uploadBytes"] += int(size)
+
+    def add_direct_download(self, size: int, target: str = "unclassified") -> None:
+        if size > 0:
+            with self._lock:
+                self.direct_download_bytes += int(size)
+                self._target_locked(target, direct=True)["downloadBytes"] += int(size)
+
     def add_connection(self, target: str = "unclassified") -> None:
         with self._lock:
             self.connections += 1
@@ -114,10 +139,31 @@ class TrafficCounters:
             )
             self._idle.notify_all()
 
+    def add_direct_connection(self, target: str = "unclassified") -> None:
+        with self._lock:
+            self.direct_connections += 1
+            self.direct_active_connections += 1
+            target_counter = self._target_locked(target, direct=True)
+            target_counter["connections"] += 1
+            target_counter["activeConnections"] += 1
+
+    def finish_direct_connection(self, target: str = "unclassified") -> None:
+        with self._idle:
+            self.direct_active_connections = max(
+                0,
+                self.direct_active_connections - 1,
+            )
+            target_counter = self._target_locked(target, direct=True)
+            target_counter["activeConnections"] = max(
+                0,
+                target_counter["activeConnections"] - 1,
+            )
+            self._idle.notify_all()
+
     def wait_for_idle(self, timeout: float) -> bool:
         deadline = time.monotonic() + max(0.0, float(timeout))
         with self._idle:
-            while self.active_connections:
+            while self.active_connections or self.direct_active_connections:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return False
@@ -140,6 +186,42 @@ class TrafficCounters:
             self.errors.append(message[:500])
             del self.errors[:-10]
 
+    def add_direct_failure(
+        self,
+        exc: BaseException,
+        target: str = "unclassified",
+    ) -> None:
+        message = f"{type(exc).__name__}: {exc}"
+        with self._lock:
+            self.direct_failures += 1
+            self._target_locked(target, direct=True)["failures"] += 1
+            self.direct_errors.append(message[:500])
+            del self.direct_errors[:-10]
+
+    @staticmethod
+    def _target_rows(targets: dict[str, dict[str, int]]) -> list[dict[str, Any]]:
+        rows = []
+        for target, value in targets.items():
+            upload = int(value.get("uploadBytes") or 0)
+            download = int(value.get("downloadBytes") or 0)
+            total = upload + download
+            rows.append(
+                {
+                    "target": target,
+                    "uploadBytes": upload,
+                    "downloadBytes": download,
+                    "totalBytes": total,
+                    "uploadMiB": round(upload / (1024 * 1024), 4),
+                    "downloadMiB": round(download / (1024 * 1024), 4),
+                    "totalMiB": round(total / (1024 * 1024), 4),
+                    "connections": int(value.get("connections") or 0),
+                    "activeConnections": int(value.get("activeConnections") or 0),
+                    "failures": int(value.get("failures") or 0),
+                }
+            )
+        rows.sort(key=lambda item: int(item["totalBytes"]), reverse=True)
+        return rows
+
     def snapshot(self, *, local_url: str) -> dict[str, Any]:
         with self._lock:
             upload = int(self.upload_bytes)
@@ -148,33 +230,23 @@ class TrafficCounters:
             active_connections = int(self.active_connections)
             failures = int(self.failures)
             errors = list(self.errors)
-            targets = {
+            targets = {key: dict(value) for key, value in self.targets.items()}
+            direct_upload = int(self.direct_upload_bytes)
+            direct_download = int(self.direct_download_bytes)
+            direct_connections = int(self.direct_connections)
+            direct_active_connections = int(self.direct_active_connections)
+            direct_failures = int(self.direct_failures)
+            direct_errors = list(self.direct_errors)
+            direct_targets = {
                 key: dict(value)
-                for key, value in self.targets.items()
+                for key, value in self.direct_targets.items()
             }
             stopped = self.stopped_at
         total = upload + download
+        direct_total = direct_upload + direct_download
         ended = stopped or time.time()
-        target_rows = []
-        for target, value in targets.items():
-            target_upload = int(value.get("uploadBytes") or 0)
-            target_download = int(value.get("downloadBytes") or 0)
-            target_total = target_upload + target_download
-            target_rows.append(
-                {
-                    "target": target,
-                    "uploadBytes": target_upload,
-                    "downloadBytes": target_download,
-                    "totalBytes": target_total,
-                    "uploadMiB": round(target_upload / (1024 * 1024), 4),
-                    "downloadMiB": round(target_download / (1024 * 1024), 4),
-                    "totalMiB": round(target_total / (1024 * 1024), 4),
-                    "connections": int(value.get("connections") or 0),
-                    "activeConnections": int(value.get("activeConnections") or 0),
-                    "failures": int(value.get("failures") or 0),
-                }
-            )
-        target_rows.sort(key=lambda item: int(item["totalBytes"]), reverse=True)
+        target_rows = self._target_rows(targets)
+        direct_target_rows = self._target_rows(direct_targets)
         return {
             "enabled": True,
             "upstreamProxy": self.upstream.display,
@@ -190,6 +262,19 @@ class TrafficCounters:
             "failures": failures,
             "errors": errors,
             "targets": target_rows,
+            "directBypass": {
+                "uploadBytes": direct_upload,
+                "downloadBytes": direct_download,
+                "totalBytes": direct_total,
+                "uploadMiB": round(direct_upload / (1024 * 1024), 4),
+                "downloadMiB": round(direct_download / (1024 * 1024), 4),
+                "totalMiB": round(direct_total / (1024 * 1024), 4),
+                "connections": direct_connections,
+                "activeConnections": direct_active_connections,
+                "failures": direct_failures,
+                "errors": direct_errors,
+            },
+            "directTargets": direct_target_rows,
             "durationSeconds": round(max(0.0, ended - self.started_at), 3),
             "measurement": (
                 "bytes read from and written to the upstream proxy socket; "
@@ -294,11 +379,17 @@ class ProxyTrafficMeter:
         host: str = "127.0.0.1",
         port: int = 0,
         connect_timeout: float = 30.0,
+        direct_hosts: Optional[Iterable[str]] = None,
     ) -> None:
         self.upstream = UpstreamProxy.from_url(upstream_url)
         self.host = host
         self.port = int(port)
         self.connect_timeout = float(connect_timeout)
+        self.direct_hosts = frozenset(
+            str(value or "").strip(".").lower()
+            for value in (direct_hosts or ())
+            if str(value or "").strip(".")
+        )
         self.counters = TrafficCounters(self.upstream)
         self.server: Optional[_MeterServer] = None
         self.thread: Optional[threading.Thread] = None
@@ -333,7 +424,21 @@ class ProxyTrafficMeter:
         return self.snapshot()
 
     def snapshot(self) -> dict[str, Any]:
-        return self.counters.snapshot(local_url=self.local_url)
+        report = self.counters.snapshot(local_url=self.local_url)
+        report["directBypassEnabled"] = bool(self.direct_hosts)
+        report["directHosts"] = sorted(self.direct_hosts)
+        return report
+
+    def _should_connect_direct(self, target_host: str) -> bool:
+        return str(target_host or "").strip(".").lower() in self.direct_hosts
+
+    def _connect_direct_target(self, target_host: str, target_port: int) -> socket.socket:
+        sock = socket.create_connection(
+            (target_host, int(target_port)),
+            timeout=self.connect_timeout,
+        )
+        sock.settimeout(None)
+        return sock
 
     def _connect_http_upstream(self) -> socket.socket:
         raw = socket.create_connection(
@@ -365,6 +470,27 @@ class ProxyTrafficMeter:
     ) -> bytes:
         data = sock.recv(size)
         self.counters.add_download(len(data), target)
+        return data
+
+    def _send_direct(
+        self,
+        sock: socket.socket,
+        data: bytes,
+        target: str,
+    ) -> None:
+        if not data:
+            return
+        sock.sendall(data)
+        self.counters.add_direct_upload(len(data), target)
+
+    def _recv_direct(
+        self,
+        sock: socket.socket,
+        size: int,
+        target: str,
+    ) -> bytes:
+        data = sock.recv(size)
+        self.counters.add_direct_download(len(data), target)
         return data
 
     def _recv_exact_upstream(
@@ -458,6 +584,8 @@ class ProxyTrafficMeter:
         client: socket.socket,
         upstream: socket.socket,
         target: str,
+        *,
+        direct: bool = False,
     ) -> None:
         def upload() -> None:
             try:
@@ -465,7 +593,10 @@ class ProxyTrafficMeter:
                     data = client.recv(BUFFER_SIZE)
                     if not data:
                         break
-                    self._send_upstream(upstream, data, target)
+                    if direct:
+                        self._send_direct(upstream, data, target)
+                    else:
+                        self._send_upstream(upstream, data, target)
             except OSError:
                 pass
             finally:
@@ -478,7 +609,11 @@ class ProxyTrafficMeter:
         thread.start()
         try:
             while True:
-                data = self._recv_upstream(upstream, target=target)
+                data = (
+                    self._recv_direct(upstream, BUFFER_SIZE, target)
+                    if direct
+                    else self._recv_upstream(upstream, target=target)
+                )
                 if not data:
                     break
                 client.sendall(data)
@@ -495,15 +630,51 @@ class ProxyTrafficMeter:
         upstream: Optional[socket.socket] = None
         connection_target = "unclassified"
         connection_started = False
+        direct_route = False
         try:
             initial = _read_until_header(client)
-            header, _ = _split_header(initial)
+            header, initial_remainder = _split_header(initial)
             method, target, _version = _request_line(header)
             if method == "CONNECT":
                 target_host, target_port = _split_host_port(target, 443)
             else:
                 _cleaned, target_host, target_port = _origin_form_request(initial)
             connection_target = _format_target(target_host, target_port)
+            direct_route = self._should_connect_direct(target_host)
+            if direct_route:
+                self.counters.add_direct_connection(connection_target)
+                try:
+                    upstream = self._connect_direct_target(target_host, target_port)
+                except Exception as exc:
+                    self.counters.add_direct_failure(exc, connection_target)
+                    self.counters.finish_direct_connection(connection_target)
+                    direct_route = False
+                    upstream = None
+                else:
+                    connection_started = True
+                if direct_route and method == "CONNECT":
+                    client.sendall(
+                        b"HTTP/1.1 200 Connection Established\r\n"
+                        b"Proxy-Agent: V5DirectSplit\r\n\r\n"
+                    )
+                    if initial_remainder:
+                        self._send_direct(
+                            upstream,
+                            initial_remainder,
+                            connection_target,
+                        )
+                elif direct_route:
+                    initial, target_host, target_port = _origin_form_request(initial)
+                    self._send_direct(upstream, initial, connection_target)
+                if direct_route:
+                    self._tunnel(
+                        client,
+                        upstream,
+                        connection_target,
+                        direct=True,
+                    )
+                    return
+
             self.counters.add_connection(connection_target)
             connection_started = True
             if self.upstream.scheme in {"http", "https"}:
@@ -544,7 +715,10 @@ class ProxyTrafficMeter:
                 self._send_upstream(upstream, initial, connection_target)
             self._tunnel(client, upstream, connection_target)
         except Exception as exc:
-            self.counters.add_failure(exc, connection_target)
+            if direct_route:
+                self.counters.add_direct_failure(exc, connection_target)
+            else:
+                self.counters.add_failure(exc, connection_target)
             try:
                 client.sendall(
                     b"HTTP/1.1 502 Bad Gateway\r\n"
@@ -559,7 +733,10 @@ class ProxyTrafficMeter:
                 except OSError:
                     pass
             if connection_started:
-                self.counters.finish_connection(connection_target)
+                if direct_route:
+                    self.counters.finish_direct_connection(connection_target)
+                else:
+                    self.counters.finish_connection(connection_target)
 
 
 class _MeterServer(socketserver.ThreadingTCPServer):

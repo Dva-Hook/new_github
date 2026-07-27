@@ -41,11 +41,38 @@ DEFAULT_REGISTRATION_COUNTRY = "USA"
 DEFAULT_YESCAPTCHA_API_URL = "https://api.yescaptcha.com/createTask"
 DEFAULT_CAPMONSTER_CREATE_URL = "https://api.capmonster.cloud/createTask"
 DEFAULT_CAPMONSTER_RESULT_URL = "https://api.capmonster.cloud/getTaskResult"
+DEFAULT_PROXY_DIRECT_HOSTS = (
+    "blz-contentstack-assets.akamaized.net",
+    "forge.akamaized.net",
+)
+_PROXY_ONLY_HOST_SUFFIXES = (
+    "arkoselabs.com",
+    "battle.net",
+    "blizzard.com",
+)
 DEFAULT_WINDOWS_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/150.0.0.0 Safari/537.36"
 )
+
+
+def parse_proxy_direct_hosts(value: Any) -> tuple[str, ...]:
+    hosts: list[str] = []
+    for raw_host in str(value or "").split(","):
+        host = raw_host.strip().strip(".").lower()
+        if not host:
+            continue
+        if any(character in host for character in "/?#@:"):
+            raise ValueError(f"直连分流项必须是纯域名，当前值为 {raw_host!r}")
+        if any(
+            host == suffix or host.endswith(f".{suffix}")
+            for suffix in _PROXY_ONLY_HOST_SUFFIXES
+        ):
+            raise ValueError(f"身份或验证域名禁止直连分流: {host}")
+        if host not in hosts:
+            hosts.append(host)
+    return tuple(hosts)
 
 
 def force_utf8_stdio() -> None:
@@ -160,14 +187,35 @@ def build_parser() -> argparse.ArgumentParser:
         "--capmonster-result-url",
         default=DEFAULT_CAPMONSTER_RESULT_URL,
     )
+    parser.add_argument(
+        "--capmonster-proxy-mode",
+        choices=("proxy", "proxyless"),
+        default=os.environ.get("V5_CAPMONSTER_PROXY_MODE", "proxy").lower(),
+        help=(
+            "proxy passes the selected registration proxy to CapMonster; "
+            "proxyless uses CapMonster's own network"
+        ),
+    )
     parser.add_argument("--capmonster-timeout", type=float, default=300.0)
     parser.add_argument("--capmonster-poll-interval", type=float, default=2.5)
+    parser.add_argument(
+        "--proxy-direct-hosts",
+        default=os.environ.get(
+            "V5_PROXY_DIRECT_HOSTS",
+            ",".join(DEFAULT_PROXY_DIRECT_HOSTS),
+        ),
+        help=(
+            "comma-separated public static hosts that bypass the upstream proxy; "
+            "blank disables split routing"
+        ),
+    )
     parser.add_argument("--cloak-locale", default="en-GB")
     return parser
 
 
 def validate_configuration(args: argparse.Namespace) -> dict[str, Any]:
     registration_country = str(args.country or "").strip().upper()
+    proxy_direct_hosts = parse_proxy_direct_hosts(args.proxy_direct_hosts)
     if len(registration_country) != 3 or not registration_country.isalpha():
         raise ValueError(
             "--country 必须是三字母 ISO 国家代码，"
@@ -202,6 +250,12 @@ def validate_configuration(args: argparse.Namespace) -> dict[str, Any]:
             int(args.email_pool_index) if args.email_source == "pool" else None
         ),
         "browserRequired": args.solver in {"v11", "yescaptcha"},
+        "proxyDirectHosts": list(proxy_direct_hosts),
+        "capmonsterProxyMode": (
+            args.capmonster_proxy_mode
+            if args.solver == "capmonster"
+            else "not-applicable"
+        ),
         "apiKeyConfigured": (
             True
             if args.solver == "v11"
@@ -271,8 +325,10 @@ def solve_with_capmonster(
         or context.get("userAgent")
         or DEFAULT_WINDOWS_USER_AGENT
     )
+    requested_proxy = str(args.capmonster_proxy_mode).lower() == "proxy"
+    use_proxy = requested_proxy and proxy.enabled
     task: dict[str, Any] = {
-        "type": "FunCaptchaTask",
+        "type": "FunCaptchaTask" if use_proxy else "FunCaptchaTaskProxyless",
         "websiteURL": website_url,
         "websitePublicKey": site_key,
         "userAgent": user_agent,
@@ -281,10 +337,23 @@ def solve_with_capmonster(
         task["data"] = json.dumps({"blob": blob}, separators=(",", ":"))
     if surl and surl != "client-api.arkoselabs.com":
         task["funcaptchaApiJSSubdomain"] = surl
-    task.update(_capmonster_proxy_fields(proxy))
+    if use_proxy:
+        task.update(_capmonster_proxy_fields(proxy))
+    task_mode = "proxy" if use_proxy else "proxyless"
+    route_note = (
+        proxy.display
+        if use_proxy
+        else (
+            "CapMonster proxyless (registration route is direct)"
+            if requested_proxy
+            else "CapMonster proxyless (explicitly selected)"
+        )
+    )
     LOG.info(
-        "CapMonster 工作节点线路: %s",
-        proxy.display if proxy.enabled else "服务商内置代理",
+        "CapMonster task: type=%s mode=%s route=%s",
+        task["type"],
+        task_mode,
+        route_note,
     )
 
     session = requests.Session()
@@ -331,6 +400,9 @@ def solve_with_capmonster(
                 "token": token,
                 "actions": [],
                 "provider": "capmonster",
+                "taskType": task["type"],
+                "proxyMode": task_mode,
+                "proxyModeRequested": args.capmonster_proxy_mode,
                 "taskId": task_id,
                 "polls": polls,
             }
@@ -966,6 +1038,7 @@ def main() -> int:
                     "countryProbe": bool(args.country_probe),
                     "proxy": proxy.summary(),
                     "proxyTrafficMeter": bool(proxy.enabled),
+                    "proxyDirectHosts": list(config["proxyDirectHosts"]),
                     "publicStaticDirect": bool(
                         proxy.enabled and not args.no_direct_public_static
                     ),
@@ -985,6 +1058,16 @@ def main() -> int:
         )
         LOG.info("注册国家: %s", registration_country)
         LOG.info("代理线路: %s auth=%s", proxy.display, proxy.has_auth)
+        LOG.info(
+            "静态资源分流: %s",
+            (
+                ", ".join(config["proxyDirectHosts"])
+                if config["proxyDirectHosts"]
+                else "关闭"
+            )
+            if proxy.enabled
+            else "无需分流（注册网络为直连）",
+        )
         LOG.info("账号: %s", identity["email"])
         LOG.info("战网昵称: %s", identity["battle_tag"])
 
@@ -997,7 +1080,10 @@ def main() -> int:
 
         runtime_proxy_url = proxy.url
         if proxy.enabled and proxy.url:
-            traffic_meter = ProxyTrafficMeter(proxy.url)
+            traffic_meter = ProxyTrafficMeter(
+                proxy.url,
+                direct_hosts=config["proxyDirectHosts"],
+            )
             runtime_proxy_url = traffic_meter.start()
             LOG.info(
                 "代理流量计已启动: local=%s upstream=%s",
@@ -1138,6 +1224,19 @@ def main() -> int:
                 "mode": "persistent-http-v5",
                 "solver": args.solver,
                 "browser": args.browser,
+                "capmonsterProxyMode": (
+                    str(
+                        solve_result.get("proxyMode")
+                        or args.capmonster_proxy_mode
+                    )
+                    if args.solver == "capmonster"
+                    else "not-applicable"
+                ),
+                "capmonsterProxyModeRequested": (
+                    args.capmonster_proxy_mode
+                    if args.solver == "capmonster"
+                    else "not-applicable"
+                ),
                 "registrationCountry": registration_country,
                 "emailSource": args.email_source,
                 "countryProbe": bool(args.country_probe),
@@ -1235,6 +1334,18 @@ def main() -> int:
                     int(report.get("connections") or 0),
                     int(report.get("failures") or 0),
                 )
+                direct = dict(report.get("directBypass") or {})
+                if int(direct.get("totalBytes") or 0):
+                    LOG.info(
+                        "直连分流流量: upload=%.4f MiB download=%.4f MiB "
+                        "total=%.4f MiB bytes=%s connections=%s failures=%s",
+                        float(direct.get("uploadMiB") or 0.0),
+                        float(direct.get("downloadMiB") or 0.0),
+                        float(direct.get("totalMiB") or 0.0),
+                        int(direct.get("totalBytes") or 0),
+                        int(direct.get("connections") or 0),
+                        int(direct.get("failures") or 0),
+                    )
 
 
 if __name__ == "__main__":

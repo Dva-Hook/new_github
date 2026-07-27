@@ -411,6 +411,19 @@ def _proxy_traffic_delta(
         int(end.get("downloadBytes") or 0) - int(start.get("downloadBytes") or 0),
     )
     total = upload + download
+    start_direct = dict(start.get("directBypass") or {})
+    end_direct = dict(end.get("directBypass") or {})
+    direct_upload = max(
+        0,
+        int(end_direct.get("uploadBytes") or 0)
+        - int(start_direct.get("uploadBytes") or 0),
+    )
+    direct_download = max(
+        0,
+        int(end_direct.get("downloadBytes") or 0)
+        - int(start_direct.get("downloadBytes") or 0),
+    )
+    direct_total = direct_upload + direct_download
     duration = max(
         0.0,
         float(end.get("durationSeconds") or 0.0)
@@ -423,6 +436,12 @@ def _proxy_traffic_delta(
         "uploadMiB": round(upload / MIB, 4),
         "downloadMiB": round(download / MIB, 4),
         "totalMiB": round(total / MIB, 4),
+        "directUploadBytes": direct_upload,
+        "directDownloadBytes": direct_download,
+        "directTotalBytes": direct_total,
+        "directUploadMiB": round(direct_upload / MIB, 4),
+        "directDownloadMiB": round(direct_download / MIB, 4),
+        "directTotalMiB": round(direct_total / MIB, 4),
         "connections": max(
             0,
             int(end.get("connections") or 0) - int(start.get("connections") or 0),
@@ -430,6 +449,16 @@ def _proxy_traffic_delta(
         "failures": max(
             0,
             int(end.get("failures") or 0) - int(start.get("failures") or 0),
+        ),
+        "directConnections": max(
+            0,
+            int(end_direct.get("connections") or 0)
+            - int(start_direct.get("connections") or 0),
+        ),
+        "directFailures": max(
+            0,
+            int(end_direct.get("failures") or 0)
+            - int(start_direct.get("failures") or 0),
         ),
         "durationSeconds": round(duration, 3),
     }
@@ -467,7 +496,12 @@ def build_proxy_traffic_phase_report(
     final = boundaries.get("final") or {}
     measured = _proxy_traffic_delta(start, final) if start and final else {}
     accounted = sum(int(item.get("totalBytes") or 0) for item in phases.values())
+    direct_accounted = sum(
+        int(item.get("directTotalBytes") or 0)
+        for item in phases.values()
+    )
     measured_total = int(measured.get("totalBytes") or 0)
+    direct_measured_total = int(measured.get("directTotalBytes") or 0)
     unaccounted = max(0, measured_total - accounted)
     return {
         "enabled": bool(final_report.get("enabled")),
@@ -476,8 +510,15 @@ def build_proxy_traffic_phase_report(
         "measured": measured,
         "accountedBytes": accounted,
         "accountedMiB": round(accounted / MIB, 4),
+        "directAccountedBytes": direct_accounted,
+        "directAccountedMiB": round(direct_accounted / MIB, 4),
         "unaccountedBytes": unaccounted,
         "unaccountedMiB": round(unaccounted / MIB, 4),
+        "directUnaccountedBytes": max(0, direct_measured_total - direct_accounted),
+        "directUnaccountedMiB": round(
+            max(0, direct_measured_total - direct_accounted) / MIB,
+            4,
+        ),
         "complete": all(name in phases for name, *_unused in phase_specs),
     }
 
@@ -508,6 +549,18 @@ def log_proxy_traffic_phases(report: Mapping[str, Any]) -> None:
             int(phase.get("connections") or 0),
             int(phase.get("failures") or 0),
         )
+        if int(phase.get("directTotalBytes") or 0):
+            LOG.info(
+                "Direct bypass phase %s: upload=%.4f MiB download=%.4f MiB "
+                "total=%.4f MiB bytes=%s connections=%s failures=%s",
+                name,
+                float(phase.get("directUploadMiB") or 0.0),
+                float(phase.get("directDownloadMiB") or 0.0),
+                float(phase.get("directTotalMiB") or 0.0),
+                int(phase.get("directTotalBytes") or 0),
+                int(phase.get("directConnections") or 0),
+                int(phase.get("directFailures") or 0),
+            )
     if int(report.get("unaccountedBytes") or 0):
         LOG.info(
             "Proxy traffic unaccounted: %.4f MiB bytes=%s",
@@ -520,6 +573,18 @@ def log_proxy_traffic_targets(report: Mapping[str, Any]) -> None:
     for item in list(report.get("targets") or [])[:10]:
         LOG.info(
             "Proxy traffic target %s: upload=%.4f MiB download=%.4f MiB "
+            "total=%.4f MiB bytes=%s connections=%s failures=%s",
+            item.get("target"),
+            float(item.get("uploadMiB") or 0.0),
+            float(item.get("downloadMiB") or 0.0),
+            float(item.get("totalMiB") or 0.0),
+            int(item.get("totalBytes") or 0),
+            int(item.get("connections") or 0),
+            int(item.get("failures") or 0),
+        )
+    for item in list(report.get("directTargets") or [])[:10]:
+        LOG.info(
+            "Direct bypass target %s: upload=%.4f MiB download=%.4f MiB "
             "total=%.4f MiB bytes=%s connections=%s failures=%s",
             item.get("target"),
             float(item.get("uploadMiB") or 0.0),

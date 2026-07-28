@@ -35,6 +35,34 @@ DEFAULT_EMAIL_BROWSER_CACHE_DIR = (
     Path(__file__).resolve().parent / ".cache" / "v5_email_browser_profile"
 )
 PROFILE_MARKER_NAME = ".v5_email_verification_profile"
+FIREFOX_PROXY_PREF_LINE = re.compile(
+    r"^\s*(?:user_)?pref\(\s*['\"]network\.proxy\.[^'\"]+['\"]\s*,",
+    re.IGNORECASE,
+)
+
+
+def clear_cached_proxy_preferences(cache_dir: Path) -> list[str]:
+    """Remove persisted Firefox proxy preferences without touching HTTP cache2."""
+
+    cache_dir = cache_dir.expanduser().resolve()
+    removed: list[str] = []
+    for filename in ("prefs.js", "user.js"):
+        path = cache_dir / filename
+        if not path.is_file():
+            continue
+        original = path.read_text(encoding="utf-8", errors="replace")
+        kept: list[str] = []
+        removed_count = 0
+        for line in original.splitlines(keepends=True):
+            if FIREFOX_PROXY_PREF_LINE.match(line):
+                removed_count += 1
+            else:
+                kept.append(line)
+        if not removed_count:
+            continue
+        path.write_text("".join(kept), encoding="utf-8")
+        removed.extend(f"{filename}:network.proxy.*" for _ in range(removed_count))
+    return removed
 
 
 def sanitize_cached_profile(
@@ -43,7 +71,7 @@ def sanitize_cached_profile(
     lock_timeout: float = 15.0,
     poll_interval: float = 0.2,
 ) -> list[str]:
-    """Remove account identity state while preserving Firefox HTTP cache2."""
+    """Remove identity and stale proxy state while preserving Firefox HTTP cache2."""
 
     cache_dir = cache_dir.expanduser().resolve()
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -122,6 +150,7 @@ def sanitize_cached_profile(
                 time.sleep(max(0.0, float(poll_interval)))
         if existed:
             removed.append(relative_path)
+    removed.extend(clear_cached_proxy_preferences(cache_dir))
     return removed
 
 
@@ -146,7 +175,7 @@ def launch_cached_ruyi_browser(
     ).expanduser().resolve()
     removed = sanitize_cached_profile(cache_dir)
     LOG.info(
-        "邮箱验证浏览器 profile 已就绪: cache=%s identityRemoved=%d cache2=%s",
+        "邮箱验证浏览器 profile 已就绪: cache=%s sanitizedEntries=%d cache2=%s",
         cache_dir,
         len(removed),
         (cache_dir / "cache2").exists(),
@@ -886,6 +915,7 @@ def verify_registered_email(
 
 __all__ = [
     "EmailVerificationResult",
+    "clear_cached_proxy_preferences",
     "close_cached_ruyi_browser",
     "direct_battlenet_link",
     "extract_battlenet_link",

@@ -391,9 +391,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: .cache/v5_email_browser_profile
-          key: v5-email-browser-profile-v1-${{ github.run_id }}
+          key: v5-email-browser-profile-v2-${{ needs.prepare.outputs.network }}-${{ github.run_id }}
           restore-keys: |
-            v5-email-browser-profile-v1-
+            v5-email-browser-profile-v2-${{ needs.prepare.outputs.network }}-
 
       - name: 修复缺失的缓存依赖
         if: steps.venv.outputs.cache-hit != 'true' || steps.ruyi-runtime.outputs.cache-hit != 'true' || (needs.prepare.outputs.browser == 'cloakbrowser' && steps.cloak-runtime.outputs.cache-hit != 'true')
@@ -573,7 +573,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: .cache/v5_email_browser_profile
-          key: v5-email-browser-profile-v1-${{ github.run_id }}
+          key: v5-email-browser-profile-v2-${{ needs.prepare.outputs.network }}-${{ github.run_id }}
 
       - name: 停止本地 V11 服务
         if: always() && needs.prepare.outputs.solver == 'v11'

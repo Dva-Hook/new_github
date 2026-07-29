@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>V5 Suite</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">跳到主内容</a>
+
+  <div class="app" id="app" data-theme="light">
+    <header class="topbar">
+      <div class="brand-block">
+        <button class="icon-button menu-toggle" id="menu-toggle" type="button" aria-label="展开导航" aria-expanded="false" title="展开导航">
+          <i data-lucide="panel-left"></i>
+        </button>
+        <div class="brand-mark" aria-hidden="true"><span></span><span></span></div>
+        <strong class="brand-name">V5 Suite</strong>
+      </div>
+
+      <nav class="product-tabs" aria-label="产品页面">
+        <button class="product-tab is-active" type="button" data-product="registration" aria-current="page">
+          <i data-lucide="user-round-plus"></i><span>注册中心</span>
+        </button>
+        <button class="product-tab" type="button" data-product="ban-lookup">
+          <i data-lucide="shield-search"></i><span>封禁查询</span>
+        </button>
+        <button class="product-tab" type="button" data-product="phone-binding">
+          <i data-lucide="smartphone"></i><span>绑定手机</span>
+        </button>
+      </nav>
+
+      <div class="topbar-actions">
+        <label class="global-search" aria-label="全局搜索">
+          <i data-lucide="search"></i>
+          <input type="search" placeholder="搜索任务、账号或批次...">
+          <kbd>Ctrl K</kbd>
+        </label>
+        <button class="icon-button" id="theme-toggle" type="button" aria-label="切换深色主题" title="切换主题">
+          <i data-lucide="moon"></i>
+        </button>
+        <button class="icon-button notification-button" type="button" aria-label="查看通知" title="通知">
+          <i data-lucide="bell"></i><span aria-hidden="true"></span>
+        </button>
+        <button class="profile-button" type="button" aria-label="打开用户菜单">
+          <span class="avatar">QD</span>
+          <span class="profile-copy"><strong>Operator</strong><small>本地工作区</small></span>
+          <i data-lucide="chevron-down"></i>
+        </button>
+      </div>
+    </header>
+
+    <div class="app-body">
+      <aside class="side-rail" id="side-rail" aria-label="注册中心导航">
+        <div class="rail-heading">
+          <span class="rail-product-icon"><i data-lucide="user-round-plus"></i></span>
+          <span class="rail-heading-copy"><strong id="rail-title">注册中心</strong><small id="rail-subtitle">Registration</small></span>
+          <button class="icon-button rail-close" type="button" data-action="close-rail" aria-label="收起导航" title="收起导航"><i data-lucide="chevron-left"></i></button>
+        </div>
+
+        <nav class="rail-nav registration-nav" data-rail-scope="registration">
+          <button class="rail-item is-active" type="button" data-view="overview" aria-current="page" title="任务总览">
+            <i data-lucide="layout-dashboard"></i><span>任务总览</span>
+          </button>
+          <button class="rail-item" type="button" data-view="new-run" title="创建任务">
+            <i data-lucide="square-plus"></i><span>创建任务</span>
+          </button>
+          <button class="rail-item" type="button" data-view="runs" title="运行记录">
+            <i data-lucide="list-checks"></i><span>运行记录</span><em>12</em>
+          </button>
+          <button class="rail-item" type="button" data-view="resources" title="资源管理">
+            <i data-lucide="database"></i><span>资源管理</span>
+          </button>
+          <button class="rail-item" type="button" data-view="results" title="结果中心">
+            <i data-lucide="file-check-2"></i><span>结果中心</span>
+          </button>
+          <button class="rail-item" type="button" data-view="logs" title="实时日志">
+            <i data-lucide="square-terminal"></i><span>实时日志</span>
+          </button>
+        </nav>
+
+        <nav class="rail-nav reserved-nav" data-rail-scope="reserved" hidden>
+          <button class="rail-item is-active" type="button" title="页面概览">
+            <i data-lucide="layout-panel-top"></i><span>页面概览</span>
+          </button>
+        </nav>
+
+        <div class="rail-footer">
+          <button class="rail-item" type="button" data-view="settings" title="设置">
+            <i data-lucide="settings"></i><span>设置</span>
+          </button>
+          <div class="service-state" role="status" title="本地服务正常">
+            <span class="status-dot"></span><span><strong>服务正常</strong><small>v5.5.0</small></span>
+          </div>
+        </div>
+      </aside>
+
+      <button class="page-scrim" id="rail-scrim" type="button" aria-label="关闭导航" hidden></button>
+
+      <main class="workspace" id="main-content" tabindex="-1">
+        <section class="product-panel is-active" data-product-panel="registration">
+          <section class="registration-view is-active" data-view-panel="overview">
+            <div class="overview-layout">
+              <div class="overview-main">
+                <section class="panel quick-panel" aria-labelledby="quick-title">
+                  <div class="panel-heading">
+                    <div><span class="section-kicker">常用配置</span><h1 id="quick-title">快捷启动</h1></div>
+                    <button class="icon-button" type="button" aria-label="更多快捷配置" title="更多"><i data-lucide="ellipsis"></i></button>
+                  </div>
+                  <div class="preset-grid" role="list">
+                    <button class="preset-card is-selected" type="button" data-preset="balanced" role="listitem">
+                      <span class="preset-icon blue"><i data-lucide="gauge"></i></span>
+                      <span class="preset-copy"><strong>均衡代理注册</strong><small>CapMonster · RuyiPage</small><em>代理 · USA · 并发 10</em></span>
+                      <i class="preset-check" data-lucide="circle-check"></i>
+                    </button>
+                    <button class="preset-card" type="button" data-preset="local-v11" role="listitem">
+                      <span class="preset-icon violet"><i data-lucide="brain-circuit"></i></span>
+                      <span class="preset-copy"><strong>本地 V11 快速</strong><small>V11 Fast · RuyiPage</small><em>直连 · GBR · 并发 20</em></span>
+                      <i class="preset-check" data-lucide="circle-check"></i>
+                    </button>
+                    <button class="preset-card" type="button" data-preset="cloak" role="listitem">
+                      <span class="preset-icon cyan"><i data-lucide="shield-check"></i></span>
+                      <span class="preset-copy"><strong>Cloak 稳定模式</strong><small>YesCaptcha · Cloak</small><em>代理 · USA · 并发 6</em></span>
+                      <i class="preset-check" data-lucide="circle-check"></i>
+                    </button>
+                    <button class="preset-card new-preset" type="button" data-action="new-run" role="listitem">
+                      <span class="preset-icon"><i data-lucide="plus"></i></span>
+                      <span class="preset-copy"><strong>新建配置</strong><small>自定义求解和网络参数</small></span>
+                    </button>
+                  </div>
+                </section>
+
+                <section class="panel batches-panel" aria-labelledby="batches-title">
+                  <div class="batch-toolbar">
+                    <div class="breadcrumbs"><span>注册中心</span><i data-lucide="chevron-right"></i><strong id="batches-title">批次任务</strong></div>
+                    <div class="batch-actions">
+                      <label class="compact-search"><i data-lucide="search"></i><input type="search" placeholder="搜索批次"></label>
+                      <button class="icon-button detail-open-button" type="button" data-action="open-detail" aria-label="打开任务详情" title="任务详情"><i data-lucide="panel-right-open"></i></button>
+                      <button class="button primary" type="button" data-action="new-run"><i data-lucide="plus"></i>新建任务</button>
+                    </div>
+                  </div>
+                  <div class="filter-row" aria-label="任务筛选">
+                    <button class="filter-chip is-selected" type="button">全部 <span>24</span></button>
+                    <button class="filter-chip" type="button">运行中 <span>1</span></button>
+                    <button class="filter-chip" type="button">已完成 <span>19</span></button>
+                    <button class="filter-chip" type="button">异常 <span>4</span></button>
+                  </div>
+                  <div class="table-scroll">
+                    <table class="batch-table">
+                      <thead><tr><th>批次</th><th>状态</th><th>进度</th><th>配置</th><th>成功率</th><th>代理流量</th><th>开始时间</th><th aria-label="操作"></th></tr></thead>
+                      <tbody>
+                        <tr class="is-selected" data-batch-id="30263221670" tabindex="0">
+                          <td><span class="batch-name"><i data-lucide="folder-kanban"></i><span><strong>#30263221670</strong><small>256 个任务</small></span></span></td>
+                          <td><span class="status-badge running"><i data-lucide="loader-circle"></i>运行中</span></td>
+                          <td><span class="progress-cell"><span><i style="width:68%"></i></span><small>174 / 256</small></span></td>
+                          <td><strong>CapMonster</strong><small>RuyiPage · 代理</small></td>
+                          <td class="mono">82.4%</td><td class="mono">101.3 MiB</td><td><time>今天 20:31</time></td>
+                          <td><button class="icon-button compact" type="button" aria-label="打开批次 30263221670"><i data-lucide="ellipsis"></i></button></td>
+                        </tr>
+                        <tr data-batch-id="30252060886" tabindex="0">
+                          <td><span class="batch-name"><i data-lucide="folder-kanban"></i><span><strong>#30252060886</strong><small>256 个任务</small></span></span></td>
+                          <td><span class="status-badge success"><i data-lucide="check"></i>已完成</span></td>
+                          <td><span class="progress-cell"><span><i style="width:100%"></i></span><small>256 / 256</small></span></td>
+                          <td><strong>CapMonster</strong><small>RuyiPage · 代理</small></td>
+                          <td class="mono">65.6%</td><td class="mono">309.9 MiB</td><td><time>昨天 18:42</time></td>
+                          <td><button class="icon-button compact" type="button" aria-label="打开批次 30252060886"><i data-lucide="ellipsis"></i></button></td>
+                        </tr>
+                        <tr data-batch-id="30241488219" tabindex="0">
+                          <td><span class="batch-name"><i data-lucide="folder-kanban"></i><span><strong>#30241488219</strong><small>64 个任务</small></span></span></td>
+                          <td><span class="status-badge success"><i data-lucide="check"></i>已完成</span></td>
+                          <td><span class="progress-cell"><span><i style="width:100%"></i></span><small>64 / 64</small></span></td>
+                          <td><strong>本地 V11</strong><small>RuyiPage · 直连</small></td>
+                          <td class="mono">78.1%</td><td class="mono">41.8 MiB</td><td><time>7 月 26 日</time></td>
+                          <td><button class="icon-button compact" type="button" aria-label="打开批次 30241488219"><i data-lucide="ellipsis"></i></button></td>
+                        </tr>
+                        <tr data-batch-id="30231176402" tabindex="0">
+                          <td><span class="batch-name"><i data-lucide="folder-kanban"></i><span><strong>#30231176402</strong><small>20 个任务</small></span></span></td>
+                          <td><span class="status-badge danger"><i data-lucide="x"></i>失败</span></td>
+                          <td><span class="progress-cell danger"><span><i style="width:35%"></i></span><small>7 / 20</small></span></td>
+                          <td><strong>YesCaptcha</strong><small>Cloak · 代理</small></td>
+                          <td class="mono">35.0%</td><td class="mono">12.6 MiB</td><td><time>7 月 25 日</time></td>
+                          <td><button class="icon-button compact" type="button" aria-label="打开批次 30231176402"><i data-lucide="ellipsis"></i></button></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <footer class="table-footer"><span>显示 1–4，共 24 条</span><div class="pagination"><button class="icon-button compact" type="button" disabled aria-label="上一页"><i data-lucide="chevron-left"></i></button><button class="page-number is-active" type="button">1</button><button class="page-number" type="button">2</button><button class="page-number" type="button">3</button><button class="icon-button compact" type="button" aria-label="下一页"><i data-lucide="chevron-right"></i></button></div></footer>
+                </section>
+              </div>
+
+              <aside class="task-detail" id="task-detail" aria-label="所选任务详情">
+                <div class="detail-heading">
+                  <span class="detail-folder"><i data-lucide="folder-kanban"></i></span>
+                  <button class="icon-button detail-close" type="button" data-action="close-detail" aria-label="关闭任务详情"><i data-lucide="x"></i></button>
+                </div>
+                <div class="detail-title"><span class="status-badge running" id="detail-status"><i data-lucide="loader-circle"></i>运行中</span><h2 id="detail-batch">#30263221670</h2><p id="detail-meta">256 个任务 · 今天 20:31</p></div>
+                <div class="detail-progress"><div><span>总体进度</span><strong id="detail-progress-label">174 / 256</strong></div><span><i id="detail-progress-bar" style="width:68%"></i></span><small id="detail-progress-percent">68%</small></div>
+                <div class="detail-actions"><button class="button primary" type="button"><i data-lucide="pause"></i>暂停</button><button class="icon-button" type="button" aria-label="停止任务" title="停止"><i data-lucide="square"></i></button><button class="icon-button" type="button" aria-label="更多任务操作" title="更多"><i data-lucide="ellipsis"></i></button></div>
+                <dl class="detail-metrics">
+                  <div><dt>成功</dt><dd class="success-text" id="metric-success">142</dd></div><div><dt>失败</dt><dd class="danger-text" id="metric-failed">19</dd></div><div><dt>重试</dt><dd class="warning-text" id="metric-retry">13</dd></div><div><dt>代理流量</dt><dd id="metric-traffic">101.3 MiB</dd></div>
+                </dl>
+                <section class="detail-section"><div class="detail-section-title"><span>任务配置</span><button class="text-button" type="button">查看</button></div><dl class="config-list"><div><dt>求解器</dt><dd id="config-solver">CapMonster</dd></div><div><dt>浏览器</dt><dd id="config-browser">RuyiPage</dd></div><div><dt>网络</dt><dd id="config-network">代理 + 分流</dd></div><div><dt>国家</dt><dd id="config-country">USA</dd></div><div><dt>邮箱</dt><dd id="config-email">指定邮箱池</dd></div></dl></section>
+                <div class="detail-tabs" role="tablist"><button class="is-active" type="button" role="tab">活动</button><button type="button" role="tab">结果</button><button type="button" role="tab">错误</button></div>
+                <ol class="timeline" id="detail-timeline">
+                  <li><i class="success"></i><span><time>20:48:45</time><strong>注册成功</strong><small>账号结果已写入批次输出</small></span></li>
+                  <li><i></i><span><time>20:48:27</time><strong>求解完成</strong><small>Arkose token 已返回</small></span></li>
+                  <li><i></i><span><time>20:48:12</time><strong>任务启动</strong><small>Worker #12 获取任务</small></span></li>
+                </ol>
+              </aside>
+            </div>
+          </section>
+
+          <section class="registration-view" data-view-panel="new-run" hidden>
+            <div class="page-heading"><div><span class="section-kicker">任务配置</span><h1>创建任务</h1><p>配置批次规模、验证码求解和网络出口。</p></div><div class="page-actions"><button class="button secondary" type="button" data-action="reset-form"><i data-lucide="rotate-ccw"></i>重置</button><button class="button primary" type="button" data-action="review-run"><i data-lucide="play"></i>启动任务</button></div></div>
+            <form class="configuration-grid" id="run-form">
+              <div class="configuration-main">
+                <section class="form-panel"><div class="form-heading"><span>01</span><div><h2>任务规模</h2><p>批次、并发和注册地区</p></div></div><div class="form-grid three">
+                  <label class="field"><span>注册数量</span><div class="stepper"><button type="button" data-step-target="count" data-direction="down"><i data-lucide="minus"></i></button><input id="count" type="number" min="1" max="256" value="10"><button type="button" data-step-target="count" data-direction="up"><i data-lucide="plus"></i></button></div><small>范围 1–256</small></label>
+                  <label class="field"><span>最大并发</span><div class="stepper"><button type="button" data-step-target="parallel" data-direction="down"><i data-lucide="minus"></i></button><input id="parallel" type="number" min="1" max="20" value="10"><button type="button" data-step-target="parallel" data-direction="up"><i data-lucide="plus"></i></button></div><small>最多 20 个 Worker</small></label>
+                  <label class="field"><span>国家代码</span><div class="input-icon"><i data-lucide="globe-2"></i><input id="country" type="text" maxlength="3" value="USA"></div><small>ISO 三字母代码</small></label>
+                </div></section>
+                <section class="form-panel"><div class="form-heading"><span>02</span><div><h2>验证码求解</h2><p>服务、浏览器和运行参数</p></div></div><div class="choice-grid" data-choice-group="solver">
+                  <button type="button" data-value="v11"><i data-lucide="brain-circuit"></i><span><strong>本地 V11</strong><small>GPU Fast 模式</small></span></button>
+                  <button type="button" data-value="yescaptcha"><i data-lucide="scan-search"></i><span><strong>YesCaptcha</strong><small>远程分类 API</small></span></button>
+                  <button class="is-selected" type="button" data-value="capmonster"><i data-lucide="headphones"></i><span><strong>CapMonster</strong><small>远程 Token 求解</small></span></button>
+                </div><div class="conditional-row" id="provider-fields"><label class="field"><span>API 密钥</span><div class="input-icon"><i data-lucide="key-round"></i><input type="password" value="sample-key-value"></div></label><label class="toggle-field"><span><strong>传递注册代理</strong><small>关闭后使用 Proxyless</small></span><input type="checkbox" checked><i></i></label></div><div class="conditional-row" id="browser-field" hidden><label class="field"><span>求解浏览器</span><select><option>RuyiPage</option><option>CloakBrowser</option></select></label></div></section>
+                <section class="form-panel"><div class="form-heading"><span>03</span><div><h2>网络与分流</h2><p>身份请求与公共资源出口</p></div></div><div class="choice-grid two" data-choice-group="network"><button type="button" data-value="direct"><i data-lucide="wifi"></i><span><strong>直连</strong><small>使用 Runner 出口</small></span></button><button class="is-selected" type="button" data-value="proxy"><i data-lucide="shield-check"></i><span><strong>代理</strong><small>每个 Job 独立分配</small></span></button></div><label class="file-row" id="proxy-row"><span><i data-lucide="file-input"></i><span><strong>IP.txt</strong><small>1,000 条代理 · 格式有效</small></span></span><button class="button tertiary" type="button">重新选择</button></label></section>
+              </div>
+              <aside class="task-summary"><span class="section-kicker">任务摘要</span><div class="summary-state"><div><h2>准备就绪</h2><p>所有必需配置均已填写</p></div><span class="status-dot"></span></div><dl><div><dt>注册数量</dt><dd id="summary-count">10</dd></div><div><dt>最大并发</dt><dd id="summary-parallel">10</dd></div><div><dt>注册国家</dt><dd id="summary-country">USA</dd></div><div><dt>求解方式</dt><dd id="summary-solver">CapMonster</dd></div><div><dt>注册网络</dt><dd id="summary-network">代理</dd></div></dl><div class="estimate"><span>预计运行</span><strong>约 4–6 分钟</strong><small>按当前配置估算</small></div><button class="button primary wide" type="button" data-action="review-run"><i data-lucide="play"></i>启动任务</button></aside>
+            </form>
+          </section>
+
+          <section class="registration-view" data-view-panel="runs" hidden>
+            <div class="page-heading"><div><span class="section-kicker">历史与队列</span><h1>运行记录</h1><p>查看全部批次、状态和流量。</p></div><button class="button primary" type="button" data-action="new-run"><i data-lucide="plus"></i>新建任务</button></div>
+            <section class="panel simple-panel"><div class="view-toolbar"><label class="compact-search wide"><i data-lucide="search"></i><input type="search" placeholder="搜索批次 ID"></label><div class="filter-row"><button class="filter-chip is-selected" type="button">全部</button><button class="filter-chip" type="button">运行中</button><button class="filter-chip" type="button">已完成</button><button class="filter-chip" type="button">失败</button></div></div><div class="table-scroll"><table class="generic-table"><thead><tr><th>批次</th><th>状态</th><th>配置</th><th>进度</th><th>成功率</th><th>流量</th><th>开始时间</th></tr></thead><tbody><tr><td><strong>#30263221670</strong></td><td><span class="status-badge running">运行中</span></td><td>CapMonster · RuyiPage</td><td>174 / 256</td><td>82.4%</td><td>101.3 MiB</td><td>今天 20:31</td></tr><tr><td><strong>#30252060886</strong></td><td><span class="status-badge success">已完成</span></td><td>CapMonster · RuyiPage</td><td>256 / 256</td><td>65.6%</td><td>309.9 MiB</td><td>昨天 18:42</td></tr><tr><td><strong>#30231176402</strong></td><td><span class="status-badge danger">失败</span></td><td>YesCaptcha · Cloak</td><td>7 / 20</td><td>35.0%</td><td>12.6 MiB</td><td>7 月 25 日</td></tr></tbody></table></div></section>
+          </section>
+
+          <section class="registration-view" data-view-panel="resources" hidden>
+            <div class="page-heading"><div><span class="section-kicker">运行依赖</span><h1>资源管理</h1><p>代理、邮箱、模型和浏览器状态。</p></div><button class="button secondary" type="button" data-action="refresh"><i data-lucide="refresh-cw"></i>重新检测</button></div>
+            <div class="resource-grid"><article class="resource-card"><span class="resource-icon blue"><i data-lucide="network"></i></span><span class="status-badge success">可用</span><h2>代理池</h2><strong>1,000</strong><p>987 可用 · 13 冷却</p><span class="resource-meter"><i style="width:98.7%"></i></span></article><article class="resource-card"><span class="resource-icon cyan"><i data-lucide="mail"></i></span><span class="status-badge success">已同步</span><h2>待注册邮箱</h2><strong>438</strong><p>今日已消费 168</p><span class="resource-meter"><i style="width:62%"></i></span></article><article class="resource-card"><span class="resource-icon violet"><i data-lucide="brain-circuit"></i></span><span class="status-badge running">已加载</span><h2>本地 V11</h2><strong>CUDA</strong><p>Fast · 24.8 ms / 图</p><span class="resource-meter"><i style="width:76%"></i></span></article><article class="resource-card"><span class="resource-icon amber"><i data-lucide="archive"></i></span><span class="status-badge neutral">正常</span><h2>浏览器缓存</h2><strong>128 MiB</strong><p>最后更新 20:41</p><span class="resource-meter"><i style="width:48%"></i></span></article></div>
+          </section>
+
+          <section class="registration-view" data-view-panel="results" hidden>
+            <div class="page-heading"><div><span class="section-kicker">成功账号</span><h1>结果中心</h1><p>筛选、复制和导出批次结果。</p></div><button class="button primary" type="button"><i data-lucide="download"></i>导出结果</button></div>
+            <section class="panel simple-panel"><div class="view-toolbar"><label class="compact-search wide"><i data-lucide="search"></i><input type="search" placeholder="搜索账号或 BattleTag"></label><select><option>#30263221670</option><option>#30252060886</option></select></div><div class="table-scroll"><table class="generic-table"><thead><tr><th>账号</th><th>BattleTag</th><th>Player Account ID</th><th>国家</th><th>邮箱状态</th><th>完成时间</th></tr></thead><tbody><tr><td><strong>t••••••••@outlook.com</strong></td><td>Amireux64</td><td class="mono">991440161</td><td>USA</td><td><span class="status-badge success">已验证</span></td><td>20:47:38</td></tr><tr><td><strong>j••••••••@outlook.com</strong></td><td>Amireux20</td><td class="mono">991440208</td><td>USA</td><td><span class="status-badge success">已验证</span></td><td>20:46:52</td></tr><tr><td><strong>a••••••••@outlook.com</strong></td><td>Amireux11</td><td class="mono">991440245</td><td>USA</td><td><span class="status-badge warning">待确认</span></td><td>20:45:19</td></tr></tbody></table></div></section>
+          </section>
+
+          <section class="registration-view logs-view" data-view-panel="logs" hidden>
+            <div class="page-heading"><div><span class="section-kicker">运行输出</span><h1>实时日志</h1><p>按批次和 Worker 检索运行事件。</p></div><div class="page-actions"><button class="button secondary" type="button" data-action="clear-logs"><i data-lucide="trash-2"></i>清空</button><button class="button secondary" type="button"><i data-lucide="download"></i>保存</button></div></div>
+            <div class="log-shell"><div class="log-toolbar"><select><option>#30263221670</option></select><select><option>全部 Worker</option><option>Worker #07</option></select><label class="compact-search dark"><i data-lucide="search"></i><input type="search" placeholder="筛选日志内容"></label><span><i class="status-dot"></i>接收中</span></div><div class="log-console" id="log-console"><div><time>20:48:11.767</time><b>W12</b><em>INFO</em><p>持久 HTTP 流程已到达 captcha-gate</p></div><div><time>20:48:12.094</time><b>W12</b><em>INFO</em><p>Arkose 上下文已捕获 · blobLength=713</p></div><div><time>20:48:13.118</time><b>W07</b><em class="route">ROUTE</em><p>account.battle.net → upstream-proxy</p></div><div><time>20:48:27.983</time><b>W12</b><em class="done">DONE</em><p>求解器已返回 Arkose token · length=398</p></div><div><time>20:48:45.076</time><b>W12</b><em class="done">DONE</em><p>已通过持久 HTTP 会话完成注册</p></div><div><time>20:48:48.243</time><b>SYS</b><em class="route">METER</em><p>proxy=0.4268 MiB · direct=0.9831 MiB</p></div></div></div>
+          </section>
+
+          <section class="registration-view" data-view-panel="settings" hidden>
+            <div class="page-heading"><div><span class="section-kicker">本地偏好</span><h1>设置</h1><p>调整外观、路径与通知。</p></div><button class="button primary" type="button" data-action="save-settings"><i data-lucide="save"></i>保存设置</button></div>
+            <div class="settings-grid"><section class="form-panel"><div class="form-heading"><span><i data-lucide="palette"></i></span><div><h2>外观</h2><p>主题和界面密度</p></div></div><div class="setting-row"><span><strong>深色主题</strong><small>与顶部主题按钮同步</small></span><label class="toggle-field compact"><input type="checkbox" data-theme-checkbox><i></i></label></div><div class="setting-row"><span><strong>紧凑表格</strong><small>在同一视图显示更多任务</small></span><label class="toggle-field compact"><input type="checkbox" checked><i></i></label></div></section><section class="form-panel"><div class="form-heading"><span><i data-lucide="folder-cog"></i></span><div><h2>路径</h2><p>结果和模型目录</p></div></div><label class="field"><span>结果目录</span><input type="text" value="D:\V5\runs"></label><label class="field"><span>模型目录</span><input type="text" value="D:\V5\models\rank_v11"></label></section></div>
+          </section>
+        </section>
+
+        <section class="product-panel reserved-product" data-product-panel="ban-lookup" hidden>
+          <div class="empty-state"><span><i data-lucide="shield-search"></i></span><small>V5 Suite</small><h1>封禁查询</h1><p>页面框架已预留，后续将在这里接入账号绑定与封禁状态查询。</p><em>功能尚未接入</em></div>
+        </section>
+
+        <section class="product-panel reserved-product" data-product-panel="phone-binding" hidden>
+          <div class="empty-state"><span><i data-lucide="smartphone"></i></span><small>V5 Suite</small><h1>绑定手机</h1><p>页面框架已预留，后续将在这里接入手机号绑定任务与状态管理。</p><em>功能尚未接入</em></div>
+        </section>
+      </main>
+    </div>
+
+    <button class="detail-scrim" id="detail-scrim" type="button" aria-label="关闭任务详情" hidden></button>
+  </div>
+
+  <dialog class="run-dialog" id="run-dialog" aria-labelledby="dialog-title">
+    <form method="dialog">
+      <div class="dialog-heading"><span><i data-lucide="rocket"></i></span><div><small>确认任务</small><h2 id="dialog-title">启动新的 V5 批次</h2></div><button class="icon-button" value="cancel" aria-label="关闭"><i data-lucide="x"></i></button></div>
+      <div class="dialog-summary"><div><span>任务</span><strong id="dialog-count">10 个账号</strong></div><div><span>求解</span><strong id="dialog-solver">CapMonster</strong></div><div><span>网络</span><strong id="dialog-network">代理</strong></div></div>
+      <p class="dialog-note"><i data-lucide="info"></i>本页面是 UI 原型，确认按钮不会执行真实注册。</p>
+      <div class="dialog-actions"><button class="button secondary" value="cancel">返回修改</button><button class="button primary" value="confirm" data-action="confirm-run"><i data-lucide="play"></i>确认启动</button></div>
+    </form>
+  </dialog>
+
+  <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

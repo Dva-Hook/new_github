@@ -42,9 +42,14 @@ username:password@ip:port
 
 Blank lines and lines beginning with `#` are ignored. The prepare job validates
 the complete pool, rejects duplicate normalized proxies, and requires at least
-`count` entries. Matrix job `N` receives line `N`, so concurrent jobs never
-share a pool entry. Proxy credentials are written to `GITHUB_ENV` only after
-GitHub log masking is enabled.
+`count` entries. Before registration starts, each matrix job checks Battle.net
+and Arkose HTTPS reachability through its own candidate shard. Job `N` tries
+lines `N`, `N + count`, `N + 2 * count`, and so on, up to five candidates. This
+lets a job skip an unreachable line without sharing a fallback with another
+concurrent job. If no candidate passes, the job stops before selecting an email
+or starting registration. Probe logs contain only the endpoint, source line,
+HTTP status or error class, and elapsed time. Proxy credentials are written to
+`GITHUB_ENV` only after GitHub log masking is enabled.
 
 With `network=direct`, `IP.txt` is not read and the GitHub runner route is used.
 

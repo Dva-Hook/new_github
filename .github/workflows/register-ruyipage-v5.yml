@@ -434,12 +434,17 @@ jobs:
           NETWORK_MODE: ${{ needs.prepare.outputs.network }}
           PROXY_FILE: ${{ inputs.proxy_file }}
           JOB_INDEX: ${{ matrix.index }}
+          JOB_COUNT: ${{ inputs.count }}
         run: |
           set -euo pipefail
           if [ "$NETWORK_MODE" = "proxy" ]; then
             .venv/bin/python v5_proxy_pool.py \
               --file "$PROXY_FILE" \
               --index "$JOB_INDEX" \
+              --job-count "$JOB_COUNT" \
+              --preflight \
+              --max-candidates 5 \
+              --probe-timeout 8 \
               --github-env
           else
             echo "REGISTRATION_PROXY=" >> "$GITHUB_ENV"

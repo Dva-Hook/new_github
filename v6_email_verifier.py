@@ -27,6 +27,7 @@ from v5_email_verifier import (
     EmailVerificationResult,
     MESSAGES_URL,
     close_cached_ruyi_browser,
+    find_link,
     get_access_token,
     launch_cached_ruyi_browser,
     login_battle_net,
@@ -51,6 +52,27 @@ EMAIL_DETAILS_RESEND_FALLBACK_SELECTORS = (
     "#email-card .blz-card-alert meka-notification-banner a",
     "#email-card .blz-card-alert a",
 )
+EMAIL_DETAILS_RESEND_DOM_JS = r"""return (() => {
+  const anchors = Array.from(document.querySelectorAll(
+    '#email-card .blz-card-alert a, #email-card meka-notification-banner a'
+  ));
+  const normalized = (node) => String(
+    node?.innerText || node?.textContent || node?.getAttribute?.('aria-label') || ''
+  ).replace(/\s+/g, ' ').trim();
+  const resendPattern = /\bresend\b|send\s+(?:the\s+)?verification|重新发送|重发|再次发送|发送验证/i;
+  const semantic = anchors.find((node) => resendPattern.test(normalized(node)));
+  const candidate = semantic || (anchors.length === 1 ? anchors[0] : null);
+  if (!candidate) {
+    return {clicked: false, candidates: anchors.length};
+  }
+  candidate.scrollIntoView({block: 'center', inline: 'center'});
+  candidate.click();
+  return {
+    clicked: true,
+    candidates: anchors.length,
+    method: semantic ? 'semantic-text' : 'single-alert-link'
+  };
+})();"""
 EMAIL_CODE_BOX_SELECTORS = tuple(
     "#password-form > div.control-group.input-container.has-code-input "
     f"> div > div > div:nth-child({index})"
@@ -136,7 +158,11 @@ def _click_element(element: Any) -> None:
         element.click(by_js=True)
 
 
-def request_verification_email(page: Any) -> Optional[datetime]:
+def request_verification_email(
+    page: Any,
+    *,
+    check_overview_banner: bool = True,
+) -> Optional[datetime]:
     """Open the e-mail card and request a fresh Battle.net verification link.
 
     The overview banner is treated as a useful unverified-state marker, not as
@@ -145,18 +171,22 @@ def request_verification_email(page: Any) -> Optional[datetime]:
     overview banner is rendered late.
     """
 
-    banner = _optional_element(
-        page,
-        OVERVIEW_VERIFICATION_BANNER_SELECTOR,
-        timeout=6.0,
-    )
-    if banner is not None:
-        LOG.info("检测到 Battle.net 账号概览页的邮箱未验证横幅")
-    else:
-        LOG.warning("账号页未找到邮箱未验证横幅，继续直接检查电子邮箱卡片")
+    if check_overview_banner:
+        banner = _optional_element(
+            page,
+            OVERVIEW_VERIFICATION_BANNER_SELECTOR,
+            timeout=6.0,
+        )
+        if banner is not None:
+            LOG.info("检测到 Battle.net 账号概览页的邮箱未验证横幅")
+        else:
+            LOG.warning("账号页未找到邮箱未验证横幅，继续直接检查电子邮箱卡片")
 
     navigate_with_retry(page, EMAIL_DETAILS_URL, "Battle.net 电子邮箱详情页")
 
+    # Capture the boundary before any click path (including the JavaScript
+    # semantic fallback, which performs the click inside run_js).
+    requested_at = datetime.now(timezone.utc) - timedelta(seconds=30)
     resend = _optional_element(
         page,
         EMAIL_DETAILS_RESEND_SELECTOR,
@@ -164,12 +194,21 @@ def request_verification_email(page: Any) -> Optional[datetime]:
     )
     used_selector = EMAIL_DETAILS_RESEND_SELECTOR
     if resend is None:
-        for selector in EMAIL_DETAILS_RESEND_FALLBACK_SELECTORS:
-            resend = _optional_element(page, selector, timeout=2.0)
-            if resend is not None:
-                used_selector = selector
-                break
-    if resend is None:
+        dom_result: dict[str, Any] = {}
+        with contextlib.suppress(Exception):
+            raw_result = page.run_js(EMAIL_DETAILS_RESEND_DOM_JS, timeout=10)
+            if isinstance(raw_result, dict):
+                dom_result = dict(raw_result)
+        if dom_result.get("clicked"):
+            used_selector = f"dom:{dom_result.get('method') or 'fallback'}"
+        else:
+            for selector in EMAIL_DETAILS_RESEND_FALLBACK_SELECTORS:
+                resend = _optional_element(page, selector, timeout=2.0)
+                if resend is not None:
+                    used_selector = selector
+                    break
+    clicked_by_dom = used_selector.startswith("dom:")
+    if resend is None and not clicked_by_dom:
         state = wait_email_verified(page, timeout=2.0)
         if state.get("verified"):
             return None
@@ -179,12 +218,65 @@ def request_verification_email(page: Any) -> Optional[datetime]:
     # cannot race ahead of the filter boundary. Match the established V5-style
     # mailbox flow by giving Battle.net five seconds to enqueue the message
     # before the first Graph read.
-    requested_at = datetime.now(timezone.utc) - timedelta(seconds=30)
-    _click_element(resend)
+    if not clicked_by_dom:
+        _click_element(resend)
     LOG.info("已点击 Battle.net 重新发送验证邮件链接: selector=%s", used_selector)
     time.sleep(5.0)
     LOG.info("重新发送后已等待 5 秒，开始读取验证邮件")
     return requested_at
+
+
+def poll_verification_link_attempts(
+    credential: EmailCredential,
+    *,
+    not_before: datetime,
+    attempts: int = 3,
+    interval: float = 5.0,
+) -> tuple[Optional[str], int, int]:
+    """Read Graph exactly ``attempts`` times before the resend recovery path."""
+
+    total_attempts = max(1, int(attempts))
+    refresh_token = credential.refresh_token
+    scanned_total = 0
+    matching_total = 0
+    with requests.Session() as session:
+        session.trust_env = False
+        session.headers["User-Agent"] = "BattleNetV6EmailVerifier/1.0"
+        access_token, refresh_token = get_access_token(
+            session,
+            credential.client_id,
+            refresh_token,
+        )
+        for attempt in range(1, total_attempts + 1):
+            while True:
+                try:
+                    link, scanned, matching = find_link(
+                        session,
+                        access_token,
+                        not_before=not_before,
+                    )
+                    break
+                except AccessTokenExpired:
+                    access_token, refresh_token = get_access_token(
+                        session,
+                        credential.client_id,
+                        refresh_token,
+                    )
+            scanned_total = max(scanned_total, scanned)
+            matching_total = max(matching_total, matching)
+            LOG.info(
+                "第 %s/%s 次读取验证邮件: scanned=%s matching=%s found=%s",
+                attempt,
+                total_attempts,
+                scanned,
+                matching,
+                bool(link),
+            )
+            if link:
+                return link, scanned_total, matching_total
+            if attempt < total_attempts:
+                time.sleep(max(0.0, float(interval)))
+    return None, scanned_total, matching_total
 
 
 def wait_document_complete(page: Any, timeout: float) -> bool:
@@ -490,13 +582,45 @@ def verify_registered_email(
                 matching,
             )
 
-        link, link_scanned, link_matching = poll_verification_link(
+        mail_not_before = max(not_before, requested_at)
+        mail_timeout = max(1.0, float(args.email_mail_timeout))
+        mail_deadline = time.monotonic() + mail_timeout
+        link, link_scanned, link_matching = poll_verification_link_attempts(
             credential,
-            not_before=max(not_before, requested_at),
-            timeout=float(args.email_mail_timeout),
+            not_before=mail_not_before,
+            attempts=3,
+            interval=5.0,
         )
         scanned = max(scanned, link_scanned)
         matching = max(matching, link_matching)
+        if not link:
+            LOG.warning("连续 3 次未读取到验证邮件，重新点击一次发送链接")
+            try:
+                retry_requested_at = request_verification_email(
+                    page,
+                    check_overview_banner=False,
+                )
+                if retry_requested_at is None:
+                    return EmailVerificationResult(
+                        True,
+                        "already_verified",
+                        "",
+                        scanned,
+                        matching,
+                    )
+            except Exception as exc:
+                LOG.warning(
+                    "第二次触发 Battle.net 验证邮件失败，继续等待第一次请求: %s",
+                    type(exc).__name__,
+                )
+            remaining_timeout = max(1.0, mail_deadline - time.monotonic())
+            link, retry_scanned, retry_matching = poll_verification_link(
+                credential,
+                not_before=mail_not_before,
+                timeout=remaining_timeout,
+            )
+            scanned = max(scanned, retry_scanned)
+            matching = max(matching, retry_matching)
         if not link:
             state = wait_email_verified(page, timeout=3.0)
             if state.get("verified"):
@@ -556,6 +680,7 @@ __all__ = [
     "detect_email_security_stage",
     "extract_battlenet_security_code",
     "find_security_code",
+    "poll_verification_link_attempts",
     "poll_security_code",
     "read_email_verified_state",
     "request_verification_email",

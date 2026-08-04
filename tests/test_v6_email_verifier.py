@@ -139,6 +139,48 @@ def test_request_verification_email_uses_overview_and_email_card_selectors(
     assert sleeps == [5.0]
 
 
+def test_request_verification_email_uses_semantic_dom_fallback_when_selector_changed(
+    monkeypatch,
+) -> None:
+    navigated: list[tuple[str, str]] = []
+    scripts: list[str] = []
+    sleeps: list[float] = []
+
+    class Page:
+        def run_js(self, script, timeout=0):
+            scripts.append(script)
+            return {
+                "clicked": True,
+                "candidates": 2,
+                "method": "semantic-text",
+            }
+
+    monkeypatch.setattr(
+        target,
+        "wait_element",
+        lambda page, selector, timeout: (
+            object()
+            if selector == target.OVERVIEW_VERIFICATION_BANNER_SELECTOR
+            else (_ for _ in ()).throw(TimeoutError(selector))
+        ),
+    )
+    monkeypatch.setattr(
+        target,
+        "navigate_with_retry",
+        lambda page, url, description: navigated.append((url, description)),
+    )
+    monkeypatch.setattr(target.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    requested_at = target.request_verification_email(Page())
+
+    assert requested_at is not None
+    assert navigated == [
+        (target.EMAIL_DETAILS_URL, "Battle.net 电子邮箱详情页")
+    ]
+    assert scripts == [target.EMAIL_DETAILS_RESEND_DOM_JS]
+    assert sleeps == [5.0]
+
+
 def test_open_verification_link_waits_for_document_complete(monkeypatch) -> None:
     page = object()
     navigated: list[tuple[str, str, float]] = []
@@ -209,7 +251,7 @@ def test_verifier_requests_fresh_mail_before_polling(
         poll_thresholds.append(kwargs["not_before"])
         return "https://account.battle.net/overview?ticket=fresh", 4, 1
 
-    monkeypatch.setattr(target, "poll_verification_link", poll)
+    monkeypatch.setattr(target, "poll_verification_link_attempts", poll)
     monkeypatch.setattr(
         target,
         "open_verification_link",
@@ -235,6 +277,118 @@ def test_verifier_requests_fresh_mail_before_polling(
     assert result.status == "verified"
     assert calls == ["resend", "poll", "open-link"]
     assert poll_thresholds == [requested_at]
+
+
+def test_poll_verification_link_attempts_reads_exactly_three_times(
+    monkeypatch,
+) -> None:
+    credential = parse_credential_line(
+        "mail@example.com----mail-pass----client-id----refresh-token",
+        source_index=1,
+    ).to_v5()
+    reads: list[datetime] = []
+    sleeps: list[float] = []
+    threshold = datetime.now(timezone.utc) - timedelta(minutes=1)
+
+    monkeypatch.setattr(
+        target,
+        "get_access_token",
+        lambda *args, **kwargs: ("access-token", "refresh-token"),
+    )
+
+    def find(*args, **kwargs):
+        reads.append(kwargs["not_before"])
+        return None, len(reads), 0
+
+    monkeypatch.setattr(target, "find_link", find)
+    monkeypatch.setattr(target.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    link, scanned, matching = target.poll_verification_link_attempts(
+        credential,
+        not_before=threshold,
+        attempts=3,
+        interval=5.0,
+    )
+
+    assert link is None
+    assert scanned == 3
+    assert matching == 0
+    assert reads == [threshold, threshold, threshold]
+    assert sleeps == [5.0, 5.0]
+
+
+def test_verifier_clicks_resend_again_after_three_empty_reads(
+    monkeypatch, tmp_path: Path
+) -> None:
+    credential = parse_credential_line(
+        "mail@example.com----mail-pass----client-id----refresh-token",
+        source_index=1,
+    ).to_v5()
+    page = object()
+    first_requested_at = datetime.now(timezone.utc) - timedelta(seconds=20)
+    second_requested_at = datetime.now(timezone.utc) - timedelta(seconds=5)
+    request_times = iter((first_requested_at, second_requested_at))
+    calls: list[str] = []
+    request_options: list[bool] = []
+
+    monkeypatch.setattr(
+        target,
+        "launch_cached_ruyi_browser",
+        lambda *args, **kwargs: (page, tmp_path / "profile"),
+    )
+    monkeypatch.setattr(
+        target,
+        "login_battle_net",
+        lambda *args, **kwargs: EmailVerificationResult(True, "logged_in"),
+    )
+    monkeypatch.setattr(
+        target,
+        "wait_email_verified",
+        lambda *args, **kwargs: {"verified": False, "unverified": True},
+    )
+
+    def request(*args, **kwargs):
+        calls.append("resend")
+        request_options.append(kwargs.get("check_overview_banner", True))
+        return next(request_times)
+
+    monkeypatch.setattr(target, "request_verification_email", request)
+    monkeypatch.setattr(
+        target,
+        "poll_verification_link_attempts",
+        lambda *args, **kwargs: calls.append("poll-3") or (None, 3, 0),
+    )
+    monkeypatch.setattr(
+        target,
+        "poll_verification_link",
+        lambda *args, **kwargs: calls.append("poll-after-resend")
+        or ("https://account.battle.net/overview?ticket=fresh", 4, 1),
+    )
+    monkeypatch.setattr(
+        target,
+        "open_verification_link",
+        lambda *args, **kwargs: calls.append("open-link") or True,
+    )
+    monkeypatch.setattr(target, "close_cached_ruyi_browser", lambda *a, **k: None)
+
+    result = target.verify_registered_email(
+        credential,
+        "battle-password",
+        args=SimpleNamespace(
+            email_login_timeout=60,
+            email_mail_timeout=120,
+            email_verification_timeout=20,
+        ),
+        proxy=SimpleNamespace(),
+        runtime_proxy_url=None,
+        output_dir=tmp_path,
+        not_before=datetime.now(timezone.utc) - timedelta(minutes=5),
+    )
+
+    assert result.ok is True
+    assert result.status == "verified"
+    assert calls == ["resend", "poll-3", "resend", "poll-after-resend", "open-link"]
+    assert request_options == [True, False]
 
 
 def test_verifier_does_not_poll_when_resend_cannot_be_triggered(

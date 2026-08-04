@@ -1,0 +1,774 @@
+name: V6 注册
+
+on:
+  workflow_dispatch:
+    inputs:
+      count:
+        description: "注册任务数量（1-256）"
+        required: true
+        default: "1"
+        type: string
+      max_parallel:
+        description: "最大并发数量（1-20）"
+        required: true
+        default: "20"
+        type: string
+      country_code:
+        description: "注册国家代码（例如 USA、GBR、CAN）"
+        required: true
+        default: "USA"
+        type: string
+      solver:
+        description: "验证码求解方式"
+        required: true
+        default: "CapMonster"
+        type: choice
+        options:
+          - "本地 V11"
+          - "YesCaptcha"
+          - "CapMonster"
+      yescaptcha_key:
+        description: "YesCaptcha 密钥（已配置仓库 Secret 时留空）"
+        required: false
+        default: ""
+        type: string
+      capmonster_key:
+        description: "CapMonster 密钥（已配置仓库 Secret 时留空）"
+        required: false
+        default: ""
+        type: string
+      capmonster_proxy:
+        description: "是否把当前注册代理传给 CapMonster（仅 CapMonster 生效）"
+        required: true
+        default: "传代理"
+        type: choice
+        options:
+          - "传代理"
+          - "不传代理"
+      browser:
+        description: "Arkose 求解浏览器"
+        required: true
+        default: "RuyiPage"
+        type: choice
+        options:
+          - "RuyiPage"
+          - "CloakBrowser"
+      network:
+        description: "注册网络线路"
+        required: true
+        default: "代理"
+        type: choice
+        options:
+          - "直连"
+          - "代理"
+      proxy_file:
+        description: "代理池文件路径（仅代理模式使用）"
+        required: true
+        default: "IP.txt"
+        type: string
+      email_source:
+        description: "注册邮箱来源"
+        required: true
+        default: "待注册邮箱"
+        type: choice
+        options:
+          - "虚拟邮箱"
+          - "待注册邮箱"
+
+concurrency:
+  group: ${{ inputs.email_source == '待注册邮箱' && format('V6-待注册邮箱-{0}-{1}', github.repository, github.ref_name) || format('V6-虚拟邮箱-{0}', github.run_id) }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      indices: ${{ steps.matrix.outputs.indices }}
+      max_parallel: ${{ steps.matrix.outputs.max_parallel }}
+      country_code: ${{ steps.matrix.outputs.country_code }}
+      country_name: ${{ steps.matrix.outputs.country_name }}
+      solver: ${{ steps.matrix.outputs.solver }}
+      capmonster_proxy_mode: ${{ steps.matrix.outputs.capmonster_proxy_mode }}
+      browser: ${{ steps.matrix.outputs.browser }}
+      network: ${{ steps.matrix.outputs.network }}
+      email_source: ${{ steps.matrix.outputs.email_source }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 校验输入并生成任务矩阵
+        id: matrix
+        env:
+          REQUESTED_COUNT: ${{ inputs.count }}
+          REQUESTED_MAX_PARALLEL: ${{ inputs.max_parallel }}
+          REQUESTED_COUNTRY_CODE: ${{ inputs.country_code }}
+          NETWORK_MODE_LABEL: ${{ inputs.network }}
+          PROXY_FILE: ${{ inputs.proxy_file }}
+          SOLVER_MODE_LABEL: ${{ inputs.solver }}
+          CAPMONSTER_PROXY_MODE_LABEL: ${{ inputs.capmonster_proxy }}
+          BROWSER_MODE_LABEL: ${{ inputs.browser }}
+          EMAIL_SOURCE_LABEL: ${{ inputs.email_source }}
+          EMAIL_POOL_FILE: "Email_registing_v6.txt"
+          YESCAPTCHA_API_KEY: ${{ secrets.YESCAPTCHA_API_KEY || inputs.yescaptcha_key }}
+          CAPMONSTER_API_KEY: ${{ secrets.CAPMONSTER_API_KEY || inputs.capmonster_key }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          from v5_proxy_pool import load_proxy_pool
+          from v6_email_pool import validate_pool_capacity
+
+          def bounded_int(name, raw, upper):
+              try:
+                  value = int(raw)
+              except (TypeError, ValueError):
+                  raise SystemExit(f"{name} 必须是整数，当前值为 {raw!r}")
+              if not 1 <= value <= upper:
+                  raise SystemExit(f"{name} 必须在 1..{upper} 范围内，当前值为 {value}")
+              return value
+
+          count = bounded_int("count", os.environ["REQUESTED_COUNT"], 256)
+          requested_parallel = bounded_int(
+              "max_parallel", os.environ["REQUESTED_MAX_PARALLEL"], 20
+          )
+          max_parallel = min(requested_parallel, count, 20)
+          country_file = Path("country_codes.txt")
+          if not country_file.is_file():
+              raise SystemExit(f"国家代码文件不存在: {country_file}")
+          country_names = {}
+          for line_number, raw_line in enumerate(
+              country_file.read_text(encoding="utf-8").splitlines(), start=1
+          ):
+              line = raw_line.strip()
+              if not line:
+                  continue
+              try:
+                  name, code = line.rsplit("----", 1)
+              except ValueError as exc:
+                  raise SystemExit(
+                      f"国家代码文件第 {line_number} 行格式错误"
+                  ) from exc
+              name = name.strip()
+              code = code.strip().upper()
+              if not name or len(code) != 3 or not code.isalpha():
+                  raise SystemExit(
+                      f"国家代码文件第 {line_number} 行映射错误"
+                  )
+              if code in country_names:
+                  raise SystemExit(f"国家代码重复: {code}")
+              country_names[code] = name
+          country_code = os.environ["REQUESTED_COUNTRY_CODE"].strip().upper()
+          country_name = country_names.get(country_code)
+          if not country_name:
+              raise SystemExit(
+                  f"不支持的国家代码: {country_code!r}；"
+                  "请使用 country_codes.txt 中的三字母代码"
+              )
+          solver_map = {
+              "本地 V11": "v11",
+              "YesCaptcha": "yescaptcha",
+              "CapMonster": "capmonster",
+          }
+          browser_map = {"RuyiPage": "ruyipage", "CloakBrowser": "cloakbrowser"}
+          network_map = {"直连": "direct", "代理": "proxy"}
+          capmonster_proxy_map = {"传代理": "proxy", "不传代理": "proxyless"}
+          email_source_map = {"虚拟邮箱": "generated", "待注册邮箱": "pool"}
+          try:
+              solver = solver_map[os.environ["SOLVER_MODE_LABEL"].strip()]
+              capmonster_proxy_mode = capmonster_proxy_map[
+                  os.environ["CAPMONSTER_PROXY_MODE_LABEL"].strip()
+              ]
+              browser = browser_map[os.environ["BROWSER_MODE_LABEL"].strip()]
+              network = network_map[os.environ["NETWORK_MODE_LABEL"].strip()]
+              email_source = email_source_map[os.environ["EMAIL_SOURCE_LABEL"].strip()]
+          except KeyError as exc:
+              raise SystemExit(f"不支持的工作流选项: {exc.args[0]}") from exc
+          yescaptcha_key = os.environ.get("YESCAPTCHA_API_KEY", "").strip()
+          capmonster_key = os.environ.get("CAPMONSTER_API_KEY", "").strip()
+          for value in (yescaptcha_key, capmonster_key):
+              if value:
+                  print(f"::add-mask::{value}")
+          if solver == "yescaptcha" and not yescaptcha_key:
+              raise SystemExit("YesCaptcha 模式需要仓库 Secret 或手动输入密钥")
+          if solver == "capmonster" and not capmonster_key:
+              raise SystemExit("CapMonster 模式需要仓库 Secret 或手动输入密钥")
+          if network == "proxy":
+              root = Path.cwd().resolve()
+              proxy_path = (root / os.environ["PROXY_FILE"]).resolve()
+              if root not in proxy_path.parents:
+                  raise SystemExit("代理池文件必须位于仓库目录内")
+              if not proxy_path.is_file():
+                  raise SystemExit(f"代理池文件不存在: {proxy_path}")
+              records = load_proxy_pool(proxy_path)
+              if len(records) < count:
+                  raise SystemExit(
+                      f"代理池只有 {len(records)} 条，但任务需要 {count} 条"
+                  )
+              print(f"代理池校验通过：总数={len(records)}，需要={count}")
+          if email_source == "pool":
+              root = Path.cwd().resolve()
+              email_pool_path = (root / os.environ["EMAIL_POOL_FILE"]).resolve()
+              if root not in email_pool_path.parents:
+                  raise SystemExit("待注册邮箱文件必须位于仓库目录内")
+              pool_count = validate_pool_capacity(email_pool_path, count)
+              print(f"待注册邮箱校验通过：总数={pool_count}，需要={count}")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as fp:
+              fp.write(f"indices={json.dumps(list(range(1, count + 1)))}\n")
+              fp.write(f"max_parallel={max_parallel}\n")
+              fp.write(f"country_code={country_code}\n")
+              fp.write(f"country_name={country_name}\n")
+              fp.write(f"solver={solver}\n")
+              fp.write(f"capmonster_proxy_mode={capmonster_proxy_mode}\n")
+              fp.write(f"browser={browser}\n")
+              fp.write(f"network={network}\n")
+              fp.write(f"email_source={email_source}\n")
+          print(
+              f"任务数={count} 最大并发={max_parallel} "
+              f"求解={os.environ['SOLVER_MODE_LABEL']} "
+              f"CapMonster代理={os.environ['CAPMONSTER_PROXY_MODE_LABEL']} "
+              f"浏览器={os.environ['BROWSER_MODE_LABEL']} "
+              f"网络={os.environ['NETWORK_MODE_LABEL']} "
+              f"邮箱来源={os.environ['EMAIL_SOURCE_LABEL']} "
+              f"国家={country_name}({country_code})"
+          )
+          PY
+
+  deps-cache:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 配置 Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: 缓存 V6 虚拟环境
+        id: venv
+        uses: actions/cache@v5
+        with:
+          path: .venv
+          key: v5-${{ needs.prepare.outputs.solver }}-${{ needs.prepare.outputs.browser }}-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage-v5.txt', 'requirements-ruyipage-v4.txt', 'rank_v11/requirements.txt') }}
+
+      - name: 构建 V6 虚拟环境
+        if: steps.venv.outputs.cache-hit != 'true'
+        env:
+          V5_SOLVER: ${{ needs.prepare.outputs.solver }}
+          V5_BROWSER: ${{ needs.prepare.outputs.browser }}
+        run: |
+          set -euo pipefail
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/pip install -r requirements-ruyipage-v5.txt
+          if [ "$V5_SOLVER" = "v11" ]; then
+            .venv/bin/pip install torch torchvision \
+              --index-url https://download.pytorch.org/whl/cpu
+          fi
+          if [ "$V5_BROWSER" = "cloakbrowser" ]; then
+            .venv/bin/pip install "cloakbrowser>=0.4.10"
+          fi
+
+      - name: 校验所选依赖
+        env:
+          V5_SOLVER: ${{ needs.prepare.outputs.solver }}
+          V5_BROWSER: ${{ needs.prepare.outputs.browser }}
+        run: |
+          .venv/bin/python - <<'PY'
+          import importlib.util
+          import os
+
+          required = [
+              "ruyipage", "curl_cffi", "bs4", "websocket", "requests",
+              "PIL", "numpy", "cv2",
+          ]
+          if os.environ["V5_SOLVER"] == "v11":
+              required.extend(["torch", "torchvision"])
+          if os.environ["V5_BROWSER"] == "cloakbrowser":
+              required.append("cloakbrowser")
+          missing = [name for name in required if importlib.util.find_spec(name) is None]
+          if missing:
+              raise SystemExit(f"缺少模块: {missing}")
+          import register_ruyipage_v6
+          print("V6 依赖校验通过")
+          PY
+
+      - name: 缓存 RuyiPage Firefox 运行时
+        id: ruyi-runtime
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ruyipage
+          key: ruyipage-firefox-${{ runner.os }}-v1
+
+      - name: 安装 RuyiPage Firefox 运行时
+        if: steps.ruyi-runtime.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          .venv/bin/python -m ruyipage install
+          .venv/bin/python -m ruyipage doctor
+
+      - name: 缓存 CloakBrowser Chromium 运行时
+        if: needs.prepare.outputs.browser == 'cloakbrowser'
+        id: cloak-runtime
+        uses: actions/cache@v5
+        with:
+          path: ~/.cloakbrowser
+          key: cloakbrowser-chromium-${{ runner.os }}-v1
+
+      - name: 安装 CloakBrowser Chromium 运行时
+        if: needs.prepare.outputs.browser == 'cloakbrowser' && steps.cloak-runtime.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          .venv/bin/python - <<'PY'
+          import cloakbrowser
+          cloakbrowser.ensure_binary()
+          info = cloakbrowser.binary_info()
+          if not info.get("installed"):
+              raise SystemExit(f"CloakBrowser 浏览器不可用: {info}")
+          print(f"CloakBrowser 已就绪：版本={info.get('version')}")
+          PY
+
+  register:
+    needs: [prepare, deps-cache]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(needs.prepare.outputs.max_parallel) }}
+      matrix:
+        index: ${{ fromJSON(needs.prepare.outputs.indices) }}
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 配置 Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: 恢复 V6 虚拟环境
+        id: venv
+        uses: actions/cache@v5
+        with:
+          path: .venv
+          key: v5-${{ needs.prepare.outputs.solver }}-${{ needs.prepare.outputs.browser }}-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage-v5.txt', 'requirements-ruyipage-v4.txt', 'rank_v11/requirements.txt') }}
+
+      - name: 恢复 RuyiPage Firefox 运行时
+        id: ruyi-runtime
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ruyipage
+          key: ruyipage-firefox-${{ runner.os }}-v1
+
+      - name: 恢复 CloakBrowser Chromium 运行时
+        if: needs.prepare.outputs.browser == 'cloakbrowser'
+        id: cloak-runtime
+        uses: actions/cache@v5
+        with:
+          path: ~/.cloakbrowser
+          key: cloakbrowser-chromium-${{ runner.os }}-v1
+
+      - name: 恢复 V6 公共静态缓存
+        id: public-static-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: .cache/v5_public_static
+          key: http-v5-public-static-v1-${{ github.run_id }}
+          restore-keys: |
+            http-v5-public-static-v1-
+
+      - name: 恢复邮箱验证浏览器静态缓存
+        if: needs.prepare.outputs.email_source == 'pool'
+        id: email-browser-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: .cache/v5_email_browser_profile
+          key: v5-email-browser-profile-v2-${{ needs.prepare.outputs.network }}-${{ github.run_id }}
+          restore-keys: |
+            v5-email-browser-profile-v2-${{ needs.prepare.outputs.network }}-
+
+      - name: 修复缺失的缓存依赖
+        if: steps.venv.outputs.cache-hit != 'true' || steps.ruyi-runtime.outputs.cache-hit != 'true' || (needs.prepare.outputs.browser == 'cloakbrowser' && steps.cloak-runtime.outputs.cache-hit != 'true')
+        env:
+          V5_SOLVER: ${{ needs.prepare.outputs.solver }}
+          V5_BROWSER: ${{ needs.prepare.outputs.browser }}
+        run: |
+          set -euo pipefail
+          if [ ! -x .venv/bin/python ]; then
+            python -m venv .venv
+            .venv/bin/python -m pip install --upgrade pip
+            .venv/bin/pip install -r requirements-ruyipage-v5.txt
+            if [ "$V5_SOLVER" = "v11" ]; then
+              .venv/bin/pip install torch torchvision \
+                --index-url https://download.pytorch.org/whl/cpu
+            fi
+            if [ "$V5_BROWSER" = "cloakbrowser" ]; then
+              .venv/bin/pip install "cloakbrowser>=0.4.10"
+            fi
+          fi
+          if ! .venv/bin/python -m ruyipage doctor >/dev/null 2>&1; then
+            .venv/bin/python -m ruyipage install
+            .venv/bin/python -m ruyipage doctor
+          fi
+          if [ "$V5_BROWSER" = "cloakbrowser" ]; then
+            .venv/bin/python -c "import cloakbrowser; cloakbrowser.ensure_binary()"
+          fi
+
+      - name: 确保 Xvfb 可用
+        run: |
+          if ! command -v xvfb-run >/dev/null 2>&1 || ! command -v xauth >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq xvfb xauth
+          fi
+
+      - name: 分配网络线路
+        env:
+          NETWORK_MODE: ${{ needs.prepare.outputs.network }}
+          PROXY_FILE: ${{ inputs.proxy_file }}
+          JOB_INDEX: ${{ matrix.index }}
+          JOB_COUNT: ${{ inputs.count }}
+        run: |
+          set -euo pipefail
+          if [ "$NETWORK_MODE" = "proxy" ]; then
+            .venv/bin/python v5_proxy_pool.py \
+              --file "$PROXY_FILE" \
+              --index "$JOB_INDEX" \
+              --job-count "$JOB_COUNT" \
+              --preflight \
+              --max-candidates 5 \
+              --probe-timeout 8 \
+              --github-env
+          else
+            echo "REGISTRATION_PROXY=" >> "$GITHUB_ENV"
+            echo "网络线路：直连"
+          fi
+
+      - name: 隐藏打码平台密钥
+        if: needs.prepare.outputs.solver == 'yescaptcha' || needs.prepare.outputs.solver == 'capmonster'
+        env:
+          SOLVER_MODE: ${{ needs.prepare.outputs.solver }}
+          YESCAPTCHA_API_KEY: ${{ secrets.YESCAPTCHA_API_KEY || inputs.yescaptcha_key }}
+          CAPMONSTER_API_KEY: ${{ secrets.CAPMONSTER_API_KEY || inputs.capmonster_key }}
+        run: |
+          set -euo pipefail
+          if [ "$SOLVER_MODE" = "yescaptcha" ]; then
+            provider_key="$YESCAPTCHA_API_KEY"
+          else
+            provider_key="$CAPMONSTER_API_KEY"
+          fi
+          test -n "$provider_key"
+          echo "::add-mask::$provider_key"
+
+      - name: 启动本地 V11 服务
+        if: needs.prepare.outputs.solver == 'v11'
+        env:
+          RANK_V11_CACHE_DIR: ${{ runner.temp }}/rank_v11_cache_${{ matrix.index }}
+        run: |
+          set -euo pipefail
+          nohup .venv/bin/python rank_v11/server.py \
+            --host 127.0.0.1 \
+            --port 8765 \
+            --device cpu \
+            --cpu-threads 2 \
+            --mode accurate \
+            --cache-dir "$RANK_V11_CACHE_DIR" \
+            > rank_v11_server.log 2>&1 &
+          echo $! > rank_v11_server.pid
+
+      - name: 执行 HTTP V6 注册
+        env:
+          V6_SOLVER: ${{ needs.prepare.outputs.solver }}
+          V6_BROWSER: ${{ needs.prepare.outputs.browser }}
+          V6_COUNTRY: ${{ needs.prepare.outputs.country_code }}
+          V6_EMAIL_SOURCE: ${{ needs.prepare.outputs.email_source }}
+          V6_EMAIL_POOL_FILE: Email_registing_v6.txt
+          V6_EMAIL_POOL_INDEX: ${{ matrix.index }}
+          RANK_V11_URL: http://127.0.0.1:8765
+          YESCAPTCHA_API_KEY: ${{ secrets.YESCAPTCHA_API_KEY || inputs.yescaptcha_key }}
+          CAPMONSTER_API_KEY: ${{ secrets.CAPMONSTER_API_KEY || inputs.capmonster_key }}
+          V6_CAPMONSTER_PROXY_MODE: ${{ needs.prepare.outputs.capmonster_proxy_mode }}
+          V6_STATIC_CACHE_DIR: ${{ github.workspace }}/.cache/v5_public_static
+          V6_EMAIL_BROWSER_CACHE_DIR: ${{ github.workspace }}/.cache/v5_email_browser_profile
+          PYTHONUNBUFFERED: "1"
+        run: |
+          set +e
+          mkdir -p "$V6_STATIC_CACHE_DIR" "$V6_EMAIL_BROWSER_CACHE_DIR"
+          solver_click_args=(
+            --click-style balanced
+            --verify-timeout 35
+            --first-image-timeout 45
+          )
+          if [ "$V6_SOLVER" = "yescaptcha" ]; then
+            solver_click_args+=(
+              --click-interval-min-ms 250
+              --click-interval-max-ms 600
+            )
+          fi
+          last_rc=1
+          for attempt in 1 2 3; do
+            echo "::group::V6 注册尝试 ${attempt}/3"
+            xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+              .venv/bin/python register_ruyipage_v6.py \
+                --solver "$V6_SOLVER" \
+                --capmonster-proxy-mode "$V6_CAPMONSTER_PROXY_MODE" \
+                --browser "$V6_BROWSER" \
+                --country "$V6_COUNTRY" \
+                --email-source "$V6_EMAIL_SOURCE" \
+                --email-pool-file "$V6_EMAIL_POOL_FILE" \
+                --email-pool-index "$V6_EMAIL_POOL_INDEX" \
+                --proxy "$REGISTRATION_PROXY" \
+                --country-probe \
+                --headless \
+                "${solver_click_args[@]}" \
+                --static-cache-dir "$V6_STATIC_CACHE_DIR" \
+                --email-browser-cache-dir "$V6_EMAIL_BROWSER_CACHE_DIR" \
+                --rank-v11-url "$RANK_V11_URL"
+            last_rc=$?
+            echo "V6 第 ${attempt}/3 次尝试退出码：${last_rc}"
+            echo "::endgroup::"
+            if [ "$last_rc" -eq 0 ]; then
+              exit 0
+            fi
+            if [ "$last_rc" -eq 42 ]; then
+              echo "Arkose 题型不受支持，停止重试"
+              exit 42
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              sleep $((attempt * 3))
+            fi
+          done
+          exit "$last_rc"
+
+      - name: 保存更新后的 V6 公共静态缓存
+        if: always() && matrix.index == 1
+        uses: actions/cache/save@v5
+        with:
+          path: .cache/v5_public_static
+          key: http-v5-public-static-v1-${{ github.run_id }}
+
+      - name: 保存前清理邮箱验证浏览器身份状态
+        if: always() && needs.prepare.outputs.email_source == 'pool'
+        id: sanitize-email-browser-cache
+        env:
+          V5_EMAIL_BROWSER_CACHE_DIR: ${{ github.workspace }}/.cache/v5_email_browser_profile
+        run: |
+          .venv/bin/python - <<'PY'
+          import os
+          from pathlib import Path
+          from v5_email_verifier import sanitize_cached_profile
+
+          cache_dir = Path(os.environ["V5_EMAIL_BROWSER_CACHE_DIR"])
+          removed = sanitize_cached_profile(cache_dir)
+          print(
+              f"邮箱验证缓存清理完成：removed={len(removed)} "
+              f"cache2={(cache_dir / 'cache2').exists()}"
+          )
+          PY
+
+      - name: 保存邮箱验证浏览器静态缓存
+        if: always() && matrix.index == 1 && needs.prepare.outputs.email_source == 'pool' && steps.sanitize-email-browser-cache.outcome == 'success'
+        uses: actions/cache/save@v5
+        with:
+          path: .cache/v5_email_browser_profile
+          key: v5-email-browser-profile-v2-${{ needs.prepare.outputs.network }}-${{ github.run_id }}
+
+      - name: 停止本地 V11 服务
+        if: always() && needs.prepare.outputs.solver == 'v11'
+        run: |
+          if [ -f rank_v11_server.pid ]; then
+            kill "$(cat rank_v11_server.pid)" 2>/dev/null || true
+          fi
+
+      - name: 导出成功账号
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          from v6_email_pool import credential_map
+
+          root = Path("ruyipage_http_v6_register/runs")
+          pool_path = Path("Email_registing_v6.txt")
+          api_by_email = (
+              credential_map(pool_path) if pool_path.is_file() else {}
+          )
+          records = []
+          consumed = set()
+          seen = set()
+          for account_path in sorted(root.glob("run_*/account_generated.json")):
+              run_dir = account_path.parent
+              result_path = run_dir / "registration_result.json"
+              if not result_path.is_file():
+                  continue
+              result = json.loads(result_path.read_text(encoding="utf-8"))
+              if not result.get("ok"):
+                  continue
+              account = json.loads(account_path.read_text(encoding="utf-8"))
+              email = str(account.get("email") or "")
+              if not email or email.lower() in seen:
+                  continue
+              seen.add(email.lower())
+              lines = [
+                  f"账号：{email}",
+                  f"密码：{account.get('password', '')}",
+              ]
+              credential = api_by_email.get(email.casefold())
+              if credential is not None:
+                  api_line = credential.raw_line
+                  lines.append(f"API：{api_line}")
+              records.append(
+                  "\n".join(lines)
+              )
+              if str(result.get("emailSource") or "") == "pool":
+                  consumed.add(email)
+          if records:
+              Path("registered_account.txt").write_text(
+                  "\n\n".join(records) + "\n", encoding="utf-8"
+              )
+          if consumed:
+              Path("consumed_email.txt").write_text(
+                  "\n".join(sorted(consumed, key=str.casefold)) + "\n",
+                  encoding="utf-8",
+              )
+          print(f"已恢复 {len(records)} 个成功账号，待消费邮箱 {len(consumed)} 个")
+          PY
+
+      - name: 上传 V6 运行数据
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: V6-${{ inputs.solver }}-${{ inputs.browser }}-运行数据-${{ matrix.index }}
+          path: |
+            rank_v11_server.log
+            ruyipage_http_v6_register/runs/**
+          if-no-files-found: ignore
+          compression-level: 6
+
+      - name: 上传 V6 账号数据
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: V6-账号-${{ matrix.index }}
+          path: |
+            registered_account.txt
+            consumed_email.txt
+          if-no-files-found: ignore
+          compression-level: 9
+
+  collect:
+    needs: [prepare, register]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: 下载全部 V6 账号数据
+        continue-on-error: true
+        uses: actions/download-artifact@v7
+        with:
+          pattern: V6-账号-*
+          path: all_accounts
+          merge-multiple: false
+
+      - name: 汇总账号与成功邮箱
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          files = sorted(Path("all_accounts").glob("**/registered_account.txt"))
+          chunks = [path.read_text(encoding="utf-8").strip() for path in files]
+          output = "\n\n".join(chunk for chunk in chunks if chunk).strip()
+          Path("all_accounts.txt").write_text(
+              (output + "\n") if output else "（没有成功账号）\n",
+              encoding="utf-8",
+          )
+          consumed = set()
+          for path in Path("all_accounts").glob("**/consumed_email.txt"):
+              consumed.update(
+                  line.strip()
+                  for line in path.read_text(encoding="utf-8").splitlines()
+                  if line.strip()
+              )
+          Path("successful_emails.txt").write_text(
+              ("\n".join(sorted(consumed, key=str.casefold)) + "\n")
+              if consumed else "",
+              encoding="utf-8",
+          )
+          print(f"已合并 {len(files)} 个账号文件，成功待注册邮箱 {len(consumed)} 个")
+          PY
+
+      - name: 从待注册邮箱池删除成功邮箱
+        if: inputs.email_source == '待注册邮箱'
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          from v6_email_pool import remove_consumed_emails
+
+          success_path = Path("successful_emails.txt")
+          emails = (
+              [line.strip() for line in success_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+              if success_path.is_file() else []
+          )
+          result = remove_consumed_emails(Path("Email_registing_v6.txt"), emails)
+          Path("email_pool_update.json").write_text(
+              json.dumps(result, ensure_ascii=False, indent=2),
+              encoding="utf-8",
+          )
+          print(
+              f"邮箱池更新完成：成功邮箱={result['requested']} "
+              f"删除={result['removed']} 剩余={result['remaining']}"
+          )
+          PY
+
+      - name: 提交待注册邮箱池更新
+        if: inputs.email_source == '待注册邮箱'
+        env:
+          TARGET_BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- Email_registing_v6.txt; then
+            echo "待注册邮箱池没有变化，无需提交"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Email_registing_v6.txt
+          git commit -m "V6：移除已成功注册邮箱"
+          for attempt in 1 2 3; do
+            git pull --rebase origin "$TARGET_BRANCH"
+            if git push origin "HEAD:$TARGET_BRANCH"; then
+              echo "待注册邮箱池已提交到 $TARGET_BRANCH"
+              exit 0
+            fi
+            sleep $((attempt * 2))
+          done
+          echo "待注册邮箱池连续三次推送失败"
+          exit 1
+
+      - name: 上传 V6 汇总结果
+        uses: actions/upload-artifact@v6
+        with:
+          name: ALL-V6-全部成功账号
+          path: |
+            all_accounts.txt
+            successful_emails.txt
+            email_pool_update.json
+          if-no-files-found: error
+          compression-level: 9

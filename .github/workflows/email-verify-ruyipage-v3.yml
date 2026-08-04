@@ -1,0 +1,276 @@
+name: Email Verify V3 (RuyiPage Direct)
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_parallel:
+        description: "Maximum concurrent account jobs (1-20)"
+        required: true
+        default: "20"
+        type: string
+      login_timeout:
+        description: "Battle.net login timeout per account in seconds"
+        required: true
+        default: "120"
+        type: string
+      mail_timeout:
+        description: "Microsoft Graph mailbox timeout per account in seconds"
+        required: true
+        default: "180"
+        type: string
+      verification_timeout:
+        description: "Verification-link page load timeout per account in seconds"
+        required: true
+        default: "30"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: email-verify-v3-${{ github.repository }}-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      indices: ${{ steps.matrix.outputs.indices }}
+      max_parallel: ${{ steps.matrix.outputs.max_parallel }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Validate oath2_account.v3.txt and build matrix
+        id: matrix
+        env:
+          REQUESTED_MAX_PARALLEL: ${{ inputs.max_parallel }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          path = Path("oath2_account.v3.txt")
+          if not path.is_file():
+              raise SystemExit(f"account file does not exist: {path}")
+          text = path.read_text(encoding="utf-8-sig")
+          account_rows = [
+              line for line in text.splitlines()
+              if re.match(r"^(?:账号|帳號|account)\s*[:：]", line.strip(), re.I)
+          ]
+          password_rows = [
+              line for line in text.splitlines()
+              if re.match(r"^(?:密码|密碼|password)\s*[:：]", line.strip(), re.I)
+          ]
+          api_rows = [
+              line for line in text.splitlines()
+              if re.match(r"^api\s*[:：]", line.strip(), re.I)
+          ]
+          count = len(account_rows)
+          if count < 1 or len(password_rows) != count or len(api_rows) != count:
+              raise SystemExit(
+                  "oath2_account.v3.txt must contain complete account/password/API blocks"
+              )
+          if count > 256:
+              raise SystemExit("GitHub matrix supports at most 256 account jobs per run")
+          try:
+              requested = int(os.environ["REQUESTED_MAX_PARALLEL"])
+          except ValueError as exc:
+              raise SystemExit("max_parallel must be an integer") from exc
+          if not 1 <= requested <= 20:
+              raise SystemExit("max_parallel must be between 1 and 20")
+          max_parallel = min(requested, count)
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"indices={json.dumps(list(range(1, count + 1)))}\n")
+              output.write(f"max_parallel={max_parallel}\n")
+          print(f"accounts={count} maxParallel={max_parallel} network=direct")
+          PY
+
+  deps-cache:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Cache verifier virtual environment
+        id: venv
+        uses: actions/cache@v5
+        with:
+          path: .venv
+          key: email-verify-v3-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage-v5.txt', 'requirements-ruyipage-v4.txt') }}
+
+      - name: Build verifier virtual environment
+        if: steps.venv.outputs.cache-hit != 'true'
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/pip install -r requirements-ruyipage-v5.txt
+
+      - name: Cache RuyiPage Firefox runtime
+        id: ruyi-runtime
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ruyipage
+          key: ruyipage-firefox-${{ runner.os }}-v1
+
+      - name: Ensure RuyiPage runtime is healthy
+        run: |
+          if ! .venv/bin/python -m ruyipage doctor >/dev/null 2>&1; then
+            .venv/bin/python -m ruyipage install
+          fi
+          .venv/bin/python -m ruyipage doctor
+
+      - name: Validate Python imports
+        run: |
+          .venv/bin/python -c "import email_verify_ruyipage_v3; print('email verifier dependencies ready')"
+
+  verify:
+    needs: [prepare, deps-cache]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(needs.prepare.outputs.max_parallel) }}
+      matrix:
+        index: ${{ fromJSON(needs.prepare.outputs.indices) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Restore verifier virtual environment
+        id: venv
+        uses: actions/cache@v5
+        with:
+          path: .venv
+          key: email-verify-v3-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage-v5.txt', 'requirements-ruyipage-v4.txt') }}
+
+      - name: Restore RuyiPage Firefox runtime
+        id: ruyi-runtime
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ruyipage
+          key: ruyipage-firefox-${{ runner.os }}-v1
+
+      - name: Repair missing cached dependencies
+        if: steps.venv.outputs.cache-hit != 'true' || steps.ruyi-runtime.outputs.cache-hit != 'true'
+        run: |
+          if [ ! -x .venv/bin/python ]; then
+            python -m venv .venv
+            .venv/bin/python -m pip install --upgrade pip
+            .venv/bin/pip install -r requirements-ruyipage-v5.txt
+          fi
+          if ! .venv/bin/python -m ruyipage doctor >/dev/null 2>&1; then
+            .venv/bin/python -m ruyipage install
+          fi
+          .venv/bin/python -m ruyipage doctor
+
+      - name: Ensure Xvfb is available
+        run: |
+          if ! command -v xvfb-run >/dev/null 2>&1 || ! command -v xauth >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq xvfb xauth
+          fi
+
+      - name: Verify one account over direct network
+        env:
+          ACCOUNT_INDEX: ${{ matrix.index }}
+          LOGIN_TIMEOUT: ${{ inputs.login_timeout }}
+          MAIL_TIMEOUT: ${{ inputs.mail_timeout }}
+          VERIFICATION_TIMEOUT: ${{ inputs.verification_timeout }}
+        run: |
+          set -euo pipefail
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            .venv/bin/python email_verify_ruyipage_v3.py \
+              --accounts oath2_account.v3.txt \
+              --account-index "$ACCOUNT_INDEX" \
+              --max-parallel 1 \
+              --headless \
+              --email-login-timeout "$LOGIN_TIMEOUT" \
+              --email-mail-timeout "$MAIL_TIMEOUT" \
+              --email-verification-timeout "$VERIFICATION_TIMEOUT" \
+              --output-dir email_verify_ruyipage_v3/runs \
+              --cache-dir ".cache/email_verify_browser_profile_${ACCOUNT_INDEX}"
+
+      - name: Upload account verification result
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: email-verify-v3-result-${{ matrix.index }}
+          path: email_verify_ruyipage_v3/runs/**
+          if-no-files-found: ignore
+          compression-level: 9
+
+  collect:
+    needs: [prepare, verify]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download account results
+        continue-on-error: true
+        uses: actions/download-artifact@v7
+        with:
+          pattern: email-verify-v3-result-*
+          path: all_email_verification_results
+
+      - name: Merge result files
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("all_email_verification_results")
+          rows = []
+          for path in root.glob("**/results.jsonl"):
+              for line in path.read_text(encoding="utf-8").splitlines():
+                  if line.strip():
+                      rows.append(json.loads(line))
+          rows.sort(key=lambda row: int(row.get("sourceIndex") or 0))
+          Path("email_verification_results.jsonl").write_text(
+              "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+              encoding="utf-8",
+          )
+          verified_chunks = [
+              path.read_text(encoding="utf-8").strip()
+              for path in root.glob("**/verified_accounts.txt")
+              if path.read_text(encoding="utf-8").strip()
+          ]
+          Path("verified_accounts_v3.txt").write_text(
+              ("\n\n".join(verified_chunks) + "\n") if verified_chunks else "",
+              encoding="utf-8",
+          )
+          summary = {
+              "total": len(rows),
+              "success": sum(bool(row.get("ok")) for row in rows),
+              "failure": sum(not bool(row.get("ok")) for row in rows),
+          }
+          Path("email_verification_summary.json").write_text(
+              json.dumps(summary, ensure_ascii=False, indent=2),
+              encoding="utf-8",
+          )
+          print(summary)
+          PY
+
+      - name: Upload aggregate verification results
+        uses: actions/upload-artifact@v6
+        with:
+          name: ALL-email-verify-v3-results
+          path: |
+            email_verification_results.jsonl
+            email_verification_summary.json
+            verified_accounts_v3.txt
+          if-no-files-found: error
+          compression-level: 9

@@ -559,22 +559,7 @@ jobs:
                 echo "当前使用虚拟邮箱，不需要更新邮箱池"
                 exit 0
               fi
-              .venv/bin/python - <<'PY'
-              import os
-              from pathlib import Path
-
-              from v6_email_pool import select_email_credential
-
-              credential = select_email_credential(
-                  os.environ["V6_EMAIL_POOL_FILE"],
-                  int(os.environ["V6_EMAIL_POOL_INDEX"]),
-              )
-              Path("already_registered_email.txt").write_text(
-                  credential.email + "\n",
-                  encoding="utf-8",
-              )
-              print(f"已标记邮箱：{credential.email}")
-              PY
+              .venv/bin/python -c 'import os; from pathlib import Path; from v6_email_pool import select_email_credential; credential = select_email_credential(os.environ["V6_EMAIL_POOL_FILE"], int(os.environ["V6_EMAIL_POOL_INDEX"])); Path("already_registered_email.txt").write_text(credential.email + "\n", encoding="utf-8"); print(f"已标记邮箱：{credential.email}")'
               marker_rc=$?
               if [ "$marker_rc" -ne 0 ]; then
                 echo "已注册邮箱标记失败，保留退出码 43"

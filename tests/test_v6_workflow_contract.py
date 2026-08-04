@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,3 +55,45 @@ def test_v6_workflow_quarantines_login_form_without_retrying() -> None:
     assert "already_registered_emails.txt" in text
     assert "pool_removal_emails.txt" in text
     assert 'success_path = Path("pool_removal_emails.txt")' in text
+
+
+def test_v6_registration_shell_block_has_valid_bash_syntax() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["register"]["steps"]
+    script = next(
+        step["run"] for step in steps if step.get("name") == "执行 HTTP V6 注册"
+    )
+
+    # The exit-43 branch must not use an indented heredoc: Bash parses the whole
+    # function before executing it and would reject every job before Python starts.
+    exit_43_branch = script.split('if [ "$last_rc" -eq 43 ]; then', 1)[1]
+    exit_43_branch = exit_43_branch.split(
+        'if [ "$last_rc" -eq 42 ]; then', 1
+    )[0]
+    assert "<<'PY'" not in exit_43_branch
+
+    candidates = [Path(value) for value in [shutil.which("bash")] if value]
+    git = shutil.which("git")
+    if git:
+        candidates.append(Path(git).resolve().parents[1] / "bin" / "bash.exe")
+    bash = None
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        probe = subprocess.run(
+            [str(candidate), "--version"],
+            capture_output=True,
+            check=False,
+        )
+        if probe.returncode == 0 and b"GNU bash" in probe.stdout:
+            bash = str(candidate)
+            break
+    if bash is None:
+        pytest.skip("a usable GNU Bash is unavailable on this platform")
+    result = subprocess.run(
+        [bash, "-n"],
+        input=script.encode("utf-8"),
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")

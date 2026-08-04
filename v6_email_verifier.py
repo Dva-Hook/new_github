@@ -73,6 +73,33 @@ EMAIL_DETAILS_RESEND_DOM_JS = r"""return (() => {
     method: semantic ? 'semantic-text' : 'single-alert-link'
   };
 })();"""
+EMAIL_RESEND_API_JS = r"""return (async () => {
+  const match = String(document.cookie || '').match(/(?:^|;\s*)XSRF-TOKEN=([^;]+)/);
+  if (!match) {
+    return {ok: false, status: 0, error: 'xsrf-cookie-missing'};
+  }
+  let xsrf = match[1];
+  try {
+    xsrf = decodeURIComponent(xsrf);
+  } catch (_) {
+    // Keep the raw cookie value if it is not percent-encoded.
+  }
+  try {
+    const response = await fetch('/api/email/send', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'Accept': '*/*',
+        'Content-Type': 'application/json',
+        'X-XSRF-TOKEN': xsrf
+      }
+    });
+    await response.text();
+    return {ok: response.ok, status: response.status};
+  } catch (error) {
+    return {ok: false, status: 0, error: String(error)};
+  }
+})();"""
 EMAIL_CODE_BOX_SELECTORS = tuple(
     "#password-form > div.control-group.input-container.has-code-input "
     f"> div > div > div:nth-child({index})"
@@ -158,6 +185,39 @@ def _click_element(element: Any) -> None:
         element.click(by_js=True)
 
 
+def request_verification_email_via_browser(page: Any) -> dict[str, Any]:
+    """Request a fresh message through the authenticated page session."""
+
+    try:
+        result = page.run_js(EMAIL_RESEND_API_JS, timeout=20)
+    except Exception as exc:
+        LOG.warning(
+            "V6 browser email resend request failed before receiving a response: %s",
+            type(exc).__name__,
+        )
+        return {"ok": False, "status": 0, "error": type(exc).__name__}
+    if not isinstance(result, dict):
+        LOG.warning(
+            "V6 browser email resend request returned an unexpected result: %s",
+            type(result).__name__,
+        )
+        return {"ok": False, "status": 0, "error": "unexpected-result"}
+    normalized = dict(result)
+    if normalized.get("ok"):
+        LOG.info(
+            "V6 browser email resend request accepted: HTTP %s",
+            normalized.get("status"),
+        )
+    else:
+        LOG.warning(
+            "V6 browser email resend request was not accepted: HTTP %s error=%s; "
+            "continuing with the DOM resend control",
+            normalized.get("status"),
+            normalized.get("error") or "unknown",
+        )
+    return normalized
+
+
 def request_verification_email(
     page: Any,
     *,
@@ -187,6 +247,7 @@ def request_verification_email(
     # Capture the boundary before any click path (including the JavaScript
     # semantic fallback, which performs the click inside run_js).
     requested_at = datetime.now(timezone.utc) - timedelta(seconds=30)
+    request_verification_email_via_browser(page)
     resend = _optional_element(
         page,
         EMAIL_DETAILS_RESEND_SELECTOR,
@@ -216,13 +277,13 @@ def request_verification_email(
 
     # The timestamp is captured before the click so a very fast Graph delivery
     # cannot race ahead of the filter boundary. Match the established V5-style
-    # mailbox flow by giving Battle.net five seconds to enqueue the message
+    # mailbox flow by giving Battle.net ten seconds to enqueue the message
     # before the first Graph read.
     if not clicked_by_dom:
         _click_element(resend)
     LOG.info("已点击 Battle.net 重新发送验证邮件链接: selector=%s", used_selector)
-    time.sleep(5.0)
-    LOG.info("重新发送后已等待 5 秒，开始读取验证邮件")
+    time.sleep(10.0)
+    LOG.info("浏览器请求和页面点击完成后已等待 10 秒，开始读取验证邮件")
     return requested_at
 
 

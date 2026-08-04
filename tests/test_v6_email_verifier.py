@@ -102,6 +102,13 @@ def test_request_verification_email_uses_overview_and_email_card_selectors(
     clicked: list[str] = []
     navigated: list[tuple[str, str]] = []
     sleeps: list[float] = []
+    events: list[str] = []
+
+    class Page:
+        def run_js(self, script, timeout=0):
+            assert script == target.EMAIL_RESEND_API_JS
+            events.append("api")
+            return {"ok": True, "status": 200}
 
     class Element:
         def __init__(self, name: str) -> None:
@@ -109,6 +116,7 @@ def test_request_verification_email_uses_overview_and_email_card_selectors(
 
         def click(self, **kwargs) -> None:
             clicked.append(self.name)
+            events.append("dom-click")
 
     elements = {
         target.OVERVIEW_VERIFICATION_BANNER_SELECTOR: Element("overview-banner"),
@@ -128,7 +136,7 @@ def test_request_verification_email_uses_overview_and_email_card_selectors(
     monkeypatch.setattr(target.time, "sleep", lambda seconds: sleeps.append(seconds))
 
     before = datetime.now(timezone.utc) - timedelta(seconds=31)
-    requested_at = target.request_verification_email(object())
+    requested_at = target.request_verification_email(Page())
 
     assert requested_at is not None
     assert requested_at >= before
@@ -136,7 +144,8 @@ def test_request_verification_email_uses_overview_and_email_card_selectors(
         (target.EMAIL_DETAILS_URL, "Battle.net 电子邮箱详情页")
     ]
     assert clicked == ["resend"]
-    assert sleeps == [5.0]
+    assert events == ["api", "dom-click"]
+    assert sleeps == [10.0]
 
 
 def test_request_verification_email_uses_semantic_dom_fallback_when_selector_changed(
@@ -149,6 +158,12 @@ def test_request_verification_email_uses_semantic_dom_fallback_when_selector_cha
     class Page:
         def run_js(self, script, timeout=0):
             scripts.append(script)
+            if script == target.EMAIL_RESEND_API_JS:
+                return {
+                    "ok": False,
+                    "status": 403,
+                    "error": "rejected-for-test",
+                }
             return {
                 "clicked": True,
                 "candidates": 2,
@@ -177,8 +192,11 @@ def test_request_verification_email_uses_semantic_dom_fallback_when_selector_cha
     assert navigated == [
         (target.EMAIL_DETAILS_URL, "Battle.net 电子邮箱详情页")
     ]
-    assert scripts == [target.EMAIL_DETAILS_RESEND_DOM_JS]
-    assert sleeps == [5.0]
+    assert scripts == [
+        target.EMAIL_RESEND_API_JS,
+        target.EMAIL_DETAILS_RESEND_DOM_JS,
+    ]
+    assert sleeps == [10.0]
 
 
 def test_open_verification_link_waits_for_document_complete(monkeypatch) -> None:

@@ -29,3 +29,24 @@ def test_v6_workflow_retains_unique_matrix_allocation_and_serial_pool_runs() -> 
     assert "V6_EMAIL_POOL_INDEX: ${{ matrix.index }}" in text
     assert "cancel-in-progress: false" in text
     assert "format('V6-待注册邮箱-{0}-{1}'" in text
+
+
+def test_v6_workflow_supports_optional_email_verification() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+
+    assert "verify_email:" in text
+    assert 'default: "是"' in text
+    assert 'verify_email_map = {"是": "yes", "否": "no"}' in text
+    assert "V6_VERIFY_EMAIL: ${{ needs.prepare.outputs.verify_email }}" in text
+    assert '--verify-email "$V6_VERIFY_EMAIL"' in text
+    assert "needs.prepare.outputs.verify_email == 'yes'" in text
+
+
+def test_v6_workflow_quarantines_login_form_without_retrying() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+
+    assert 'if [ "$last_rc" -eq 43 ]; then' in text
+    assert "already_registered_email.txt" in text
+    assert "already_registered_emails.txt" in text
+    assert "pool_removal_emails.txt" in text
+    assert 'success_path = Path("pool_removal_emails.txt")' in text

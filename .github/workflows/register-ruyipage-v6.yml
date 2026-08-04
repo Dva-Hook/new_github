@@ -74,6 +74,14 @@ on:
         options:
           - "虚拟邮箱"
           - "待注册邮箱"
+      verify_email:
+        description: "注册成功后是否验证邮箱（仅待注册邮箱生效）"
+        required: true
+        default: "是"
+        type: choice
+        options:
+          - "是"
+          - "否"
 
 concurrency:
   group: ${{ inputs.email_source == '待注册邮箱' && format('V6-待注册邮箱-{0}-{1}', github.repository, github.ref_name) || format('V6-虚拟邮箱-{0}', github.run_id) }}
@@ -95,6 +103,7 @@ jobs:
       browser: ${{ steps.matrix.outputs.browser }}
       network: ${{ steps.matrix.outputs.network }}
       email_source: ${{ steps.matrix.outputs.email_source }}
+      verify_email: ${{ steps.matrix.outputs.verify_email }}
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
@@ -111,6 +120,7 @@ jobs:
           CAPMONSTER_PROXY_MODE_LABEL: ${{ inputs.capmonster_proxy }}
           BROWSER_MODE_LABEL: ${{ inputs.browser }}
           EMAIL_SOURCE_LABEL: ${{ inputs.email_source }}
+          VERIFY_EMAIL_LABEL: ${{ inputs.verify_email }}
           EMAIL_POOL_FILE: "Email_registing_v6.txt"
           YESCAPTCHA_API_KEY: ${{ secrets.YESCAPTCHA_API_KEY || inputs.yescaptcha_key }}
           CAPMONSTER_API_KEY: ${{ secrets.CAPMONSTER_API_KEY || inputs.capmonster_key }}
@@ -178,6 +188,7 @@ jobs:
           network_map = {"直连": "direct", "代理": "proxy"}
           capmonster_proxy_map = {"传代理": "proxy", "不传代理": "proxyless"}
           email_source_map = {"虚拟邮箱": "generated", "待注册邮箱": "pool"}
+          verify_email_map = {"是": "yes", "否": "no"}
           try:
               solver = solver_map[os.environ["SOLVER_MODE_LABEL"].strip()]
               capmonster_proxy_mode = capmonster_proxy_map[
@@ -186,6 +197,7 @@ jobs:
               browser = browser_map[os.environ["BROWSER_MODE_LABEL"].strip()]
               network = network_map[os.environ["NETWORK_MODE_LABEL"].strip()]
               email_source = email_source_map[os.environ["EMAIL_SOURCE_LABEL"].strip()]
+              verify_email = verify_email_map[os.environ["VERIFY_EMAIL_LABEL"].strip()]
           except KeyError as exc:
               raise SystemExit(f"不支持的工作流选项: {exc.args[0]}") from exc
           yescaptcha_key = os.environ.get("YESCAPTCHA_API_KEY", "").strip()
@@ -227,6 +239,7 @@ jobs:
               fp.write(f"browser={browser}\n")
               fp.write(f"network={network}\n")
               fp.write(f"email_source={email_source}\n")
+              fp.write(f"verify_email={verify_email}\n")
           print(
               f"任务数={count} 最大并发={max_parallel} "
               f"求解={os.environ['SOLVER_MODE_LABEL']} "
@@ -234,6 +247,7 @@ jobs:
               f"浏览器={os.environ['BROWSER_MODE_LABEL']} "
               f"网络={os.environ['NETWORK_MODE_LABEL']} "
               f"邮箱来源={os.environ['EMAIL_SOURCE_LABEL']} "
+              f"验证邮箱={os.environ['VERIFY_EMAIL_LABEL']} "
               f"国家={country_name}({country_code})"
           )
           PY
@@ -386,7 +400,7 @@ jobs:
             http-v5-public-static-v1-
 
       - name: 恢复邮箱验证浏览器静态缓存
-        if: needs.prepare.outputs.email_source == 'pool'
+        if: needs.prepare.outputs.email_source == 'pool' && needs.prepare.outputs.verify_email == 'yes'
         id: email-browser-cache
         uses: actions/cache/restore@v5
         with:
@@ -491,6 +505,7 @@ jobs:
           V6_EMAIL_SOURCE: ${{ needs.prepare.outputs.email_source }}
           V6_EMAIL_POOL_FILE: Email_registing_v6.txt
           V6_EMAIL_POOL_INDEX: ${{ matrix.index }}
+          V6_VERIFY_EMAIL: ${{ needs.prepare.outputs.verify_email }}
           RANK_V11_URL: http://127.0.0.1:8765
           YESCAPTCHA_API_KEY: ${{ secrets.YESCAPTCHA_API_KEY || inputs.yescaptcha_key }}
           CAPMONSTER_API_KEY: ${{ secrets.CAPMONSTER_API_KEY || inputs.capmonster_key }}
@@ -524,6 +539,7 @@ jobs:
                 --email-source "$V6_EMAIL_SOURCE" \
                 --email-pool-file "$V6_EMAIL_POOL_FILE" \
                 --email-pool-index "$V6_EMAIL_POOL_INDEX" \
+                --verify-email "$V6_VERIFY_EMAIL" \
                 --proxy "$REGISTRATION_PROXY" \
                 --country-probe \
                 --headless \
@@ -535,6 +551,35 @@ jobs:
             echo "V6 第 ${attempt}/3 次尝试退出码：${last_rc}"
             echo "::endgroup::"
             if [ "$last_rc" -eq 0 ]; then
+              exit 0
+            fi
+            if [ "$last_rc" -eq 43 ]; then
+              echo "检测到 bootstrap 返回 login 表单：邮箱已注册，停止重试并标记为不可再分配"
+              if [ "$V6_EMAIL_SOURCE" != "pool" ]; then
+                echo "当前使用虚拟邮箱，不需要更新邮箱池"
+                exit 0
+              fi
+              .venv/bin/python - <<'PY'
+              import os
+              from pathlib import Path
+
+              from v6_email_pool import select_email_credential
+
+              credential = select_email_credential(
+                  os.environ["V6_EMAIL_POOL_FILE"],
+                  int(os.environ["V6_EMAIL_POOL_INDEX"]),
+              )
+              Path("already_registered_email.txt").write_text(
+                  credential.email + "\n",
+                  encoding="utf-8",
+              )
+              print(f"已标记邮箱：{credential.email}")
+              PY
+              marker_rc=$?
+              if [ "$marker_rc" -ne 0 ]; then
+                echo "已注册邮箱标记失败，保留退出码 43"
+                exit 43
+              fi
               exit 0
             fi
             if [ "$last_rc" -eq 42 ]; then
@@ -555,7 +600,7 @@ jobs:
           key: http-v5-public-static-v1-${{ github.run_id }}
 
       - name: 保存前清理邮箱验证浏览器身份状态
-        if: always() && needs.prepare.outputs.email_source == 'pool'
+        if: always() && needs.prepare.outputs.email_source == 'pool' && needs.prepare.outputs.verify_email == 'yes'
         id: sanitize-email-browser-cache
         env:
           V5_EMAIL_BROWSER_CACHE_DIR: ${{ github.workspace }}/.cache/v5_email_browser_profile
@@ -574,7 +619,7 @@ jobs:
           PY
 
       - name: 保存邮箱验证浏览器静态缓存
-        if: always() && matrix.index == 1 && needs.prepare.outputs.email_source == 'pool' && steps.sanitize-email-browser-cache.outcome == 'success'
+        if: always() && matrix.index == 1 && needs.prepare.outputs.email_source == 'pool' && needs.prepare.outputs.verify_email == 'yes' && steps.sanitize-email-browser-cache.outcome == 'success'
         uses: actions/cache/save@v5
         with:
           path: .cache/v5_email_browser_profile
@@ -661,6 +706,7 @@ jobs:
           path: |
             registered_account.txt
             consumed_email.txt
+            already_registered_email.txt
           if-no-files-found: ignore
           compression-level: 9
 
@@ -685,7 +731,7 @@ jobs:
           path: all_accounts
           merge-multiple: false
 
-      - name: 汇总账号与成功邮箱
+      - name: 汇总账号与邮箱状态
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -709,10 +755,31 @@ jobs:
               if consumed else "",
               encoding="utf-8",
           )
-          print(f"已合并 {len(files)} 个账号文件，成功待注册邮箱 {len(consumed)} 个")
+          already_registered = set()
+          for path in Path("all_accounts").glob("**/already_registered_email.txt"):
+              already_registered.update(
+                  line.strip()
+                  for line in path.read_text(encoding="utf-8").splitlines()
+                  if line.strip()
+              )
+          Path("already_registered_emails.txt").write_text(
+              ("\n".join(sorted(already_registered, key=str.casefold)) + "\n")
+              if already_registered else "",
+              encoding="utf-8",
+          )
+          pool_removals = consumed | already_registered
+          Path("pool_removal_emails.txt").write_text(
+              ("\n".join(sorted(pool_removals, key=str.casefold)) + "\n")
+              if pool_removals else "",
+              encoding="utf-8",
+          )
+          print(
+              f"已合并 {len(files)} 个账号文件，成功邮箱 {len(consumed)} 个，"
+              f"原本已注册邮箱 {len(already_registered)} 个"
+          )
           PY
 
-      - name: 从待注册邮箱池删除成功邮箱
+      - name: 从待注册邮箱池删除成功或原本已注册邮箱
         if: inputs.email_source == '待注册邮箱'
         run: |
           python3 - <<'PY'
@@ -721,7 +788,7 @@ jobs:
 
           from v6_email_pool import remove_consumed_emails
 
-          success_path = Path("successful_emails.txt")
+          success_path = Path("pool_removal_emails.txt")
           emails = (
               [line.strip() for line in success_path.read_text(encoding="utf-8").splitlines() if line.strip()]
               if success_path.is_file() else []
@@ -732,7 +799,7 @@ jobs:
               encoding="utf-8",
           )
           print(
-              f"邮箱池更新完成：成功邮箱={result['requested']} "
+              f"邮箱池更新完成：需移除邮箱={result['requested']} "
               f"删除={result['removed']} 剩余={result['remaining']}"
           )
           PY
@@ -750,7 +817,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Email_registing_v6.txt
-          git commit -m "V6：移除已成功注册邮箱"
+          git commit -m "V6：移除已成功或原本已注册邮箱"
           for attempt in 1 2 3; do
             git pull --rebase origin "$TARGET_BRANCH"
             if git push origin "HEAD:$TARGET_BRANCH"; then
@@ -769,6 +836,8 @@ jobs:
           path: |
             all_accounts.txt
             successful_emails.txt
+            already_registered_emails.txt
+            pool_removal_emails.txt
             email_pool_update.json
           if-no-files-found: error
           compression-level: 9

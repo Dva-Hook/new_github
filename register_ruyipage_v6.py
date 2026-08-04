@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -17,6 +18,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "ruyipage_http_v6_register" / "runs"
 _V5_BUILD_PARSER = v5.build_parser
 _V5_VERIFY_REGISTERED_EMAIL = v6_email_verifier.verify_registered_email
+_V5_RUN_TO_CAPTCHA = v5.BattleProtocolClient.run_to_captcha
+EXIT_EMAIL_ALREADY_REGISTERED = 43
 
 
 def _map_v6_environment() -> None:
@@ -29,6 +32,7 @@ def _map_v6_environment() -> None:
         "EMAIL_POOL_FILE",
         "EMAIL_POOL_INDEX",
         "EMAIL_BROWSER_CACHE_DIR",
+        "VERIFY_EMAIL",
         "CAPMONSTER_PROXY_MODE",
         "PROXY_DIRECT_HOSTS",
         "STATIC_CACHE_DIR",
@@ -68,6 +72,18 @@ def _build_parser_v6():
                 "Email_registing_v6.txt"
             )
             break
+    verify_email_default = os.environ.get(
+        "V6_VERIFY_EMAIL",
+        os.environ.get("V5_VERIFY_EMAIL", "yes"),
+    ).strip().lower()
+    if verify_email_default not in {"yes", "no"}:
+        verify_email_default = "yes"
+    parser.add_argument(
+        "--verify-email",
+        choices=("yes", "no"),
+        default=verify_email_default,
+        help="verify the supplied mailbox after registration (default: yes)",
+    )
     return parser
 
 
@@ -77,11 +93,46 @@ def _verify_registered_email_v6(
     **kwargs,
 ):
     """Feed the V6 source fields to the unchanged V5 mailbox verifier."""
+    args = kwargs.get("args")
+    if str(getattr(args, "verify_email", "yes")).strip().lower() == "no":
+        v5.LOG.info("V6 已按工作流设置跳过注册邮箱验证")
+        return v5.EmailVerificationResult(
+            ok=True,
+            status="skipped",
+            note="",
+        )
     return _V5_VERIFY_REGISTERED_EMAIL(
         credential.to_v5(),
         account_password,
         **kwargs,
     )
+
+
+def _is_already_registered_bootstrap_error(exc: BaseException) -> bool:
+    """Recognize the server returning the sign-in form for a supplied address."""
+    message = str(exc)
+    return bool(
+        "bootstrap ended on unexpected form" in message
+        and re.search(r"form\s+['\"]login['\"]", message, flags=re.IGNORECASE)
+    )
+
+
+def _run_to_captcha_v6(self, *args, **kwargs):
+    """Give an already-registered mailbox a terminal, non-retryable exit code."""
+    try:
+        return _V5_RUN_TO_CAPTCHA(self, *args, **kwargs)
+    except RuntimeError as exc:
+        if not _is_already_registered_bootstrap_error(exc):
+            raise
+        identity = getattr(getattr(self, "state", None), "data", {}).get(
+            "identity", {}
+        )
+        email = str(identity.get("email") or "")
+        v5.LOG.warning(
+            "bootstrap 返回 login 表单，判定邮箱已注册%s；停止当前 Job 的后续重试",
+            f": {email}" if email else "",
+        )
+        raise SystemExit(EXIT_EMAIL_ALREADY_REGISTERED) from None
 
 
 def _install_v6_contract() -> None:
@@ -93,6 +144,7 @@ def _install_v6_contract() -> None:
     v5.EmailCredential = v6_email_pool.EmailCredential
     v5.select_email_credential = v6_email_pool.select_email_credential
     v5.verify_registered_email = _verify_registered_email_v6
+    v5.BattleProtocolClient.run_to_captcha = _run_to_captcha_v6
     v5.setup_logging = _setup_v6_logging
 
 

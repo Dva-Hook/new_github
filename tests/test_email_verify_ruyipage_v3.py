@@ -224,7 +224,11 @@ def test_github_workflow_uses_direct_matrix_allocation() -> None:
     assert "--max-parallel 1" in workflow
     assert "每个任务=1个账号" in workflow
     assert "--proxy" not in workflow
-    assert "最多支持 256 个账号任务" in workflow
+    assert 'description: "验证任务数量（1-256）"' in workflow
+    assert "REQUESTED_COUNT: ${{ inputs.count }}" in workflow
+    assert 'bounded_int("验证任务数量", os.environ["REQUESTED_COUNT"], 256)' in workflow
+    assert "if available_count < count:" in workflow
+    assert "list(range(1, count + 1))" in workflow
     assert "max-parallel: ${{ fromJSON(needs.prepare.outputs.max_parallel) }}" in workflow
     assert "if: always()" in workflow
     assert "失败任务也生成结果文件" in workflow

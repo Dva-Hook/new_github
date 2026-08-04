@@ -42,7 +42,6 @@ DEFAULT_ACCOUNTS_FILE = PROJECT_ROOT / "oath2_account.v3.txt"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "email_verify_ruyipage_v3" / "runs"
 DEFAULT_CACHE_DIR = PROJECT_ROOT / ".cache" / "email_verify_browser_profiles"
 MAX_PARALLEL = 20
-MAX_ACCOUNTS = 256
 
 LOG = logging.getLogger("http_register_v6.concurrent_email_verifier")
 
@@ -563,8 +562,6 @@ def run(args: argparse.Namespace) -> int:
     output_root = Path(args.output_dir).expanduser().resolve()
     cache_root = Path(args.cache_dir).expanduser().resolve()
     all_accounts = read_account_records(accounts_path)
-    if len(all_accounts) > MAX_ACCOUNTS:
-        raise ValueError(f"账号数量不能超过 {MAX_ACCOUNTS} 个")
     accounts = select_account_records(all_accounts, int(args.account_index))
     if args.check_inputs:
         for index, account in enumerate(accounts, 1):

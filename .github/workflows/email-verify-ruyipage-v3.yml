@@ -1,10 +1,15 @@
 name: 邮箱验证 V3（RuyiPage 直连）
 
-run-name: 邮箱验证 V3 / 并发 ${{ inputs.max_parallel }}
+run-name: 邮箱验证 V3 / 任务 ${{ inputs.count }} / 并发 ${{ inputs.max_parallel }}
 
 on:
   workflow_dispatch:
     inputs:
+      count:
+        description: "验证任务数量（1-256）"
+        required: true
+        default: "1"
+        type: string
       max_parallel:
         description: "最大并发任务数（1-20）；每个任务只验证一个账号"
         required: true
@@ -47,6 +52,7 @@ jobs:
       - name: 检查账号文件并生成矩阵
         id: matrix
         env:
+          REQUESTED_COUNT: ${{ inputs.count }}
           REQUESTED_MAX_PARALLEL: ${{ inputs.max_parallel }}
         run: |
           python3 - <<'PY'
@@ -71,24 +77,47 @@ jobs:
               line for line in text.splitlines()
               if re.match(r"^api\s*[:：]", line.strip(), re.I)
           ]
-          count = len(account_rows)
-          if count < 1 or len(password_rows) != count or len(api_rows) != count:
+          available_count = len(account_rows)
+          if (
+              available_count < 1
+              or len(password_rows) != available_count
+              or len(api_rows) != available_count
+          ):
               raise SystemExit(
                   "oath2_account.v3.txt 必须包含完整的账号、密码、API 三行记录"
               )
-          if count > 256:
-              raise SystemExit("GitHub 矩阵每次最多支持 256 个账号任务")
+
+          def bounded_int(name, raw, upper):
+              try:
+                  value = int(raw)
+              except (TypeError, ValueError) as exc:
+                  raise SystemExit(f"{name} 必须是整数，当前值为 {raw!r}") from exc
+              if not 1 <= value <= upper:
+                  raise SystemExit(
+                      f"{name} 必须在 1 到 {upper} 之间，当前值为 {value}"
+                  )
+              return value
+
+          count = bounded_int("验证任务数量", os.environ["REQUESTED_COUNT"], 256)
+          if available_count < count:
+              raise SystemExit(
+                  f"账号文件只有 {available_count} 个完整账号，"
+                  f"不足以创建 {count} 个验证任务"
+              )
           try:
               requested = int(os.environ["REQUESTED_MAX_PARALLEL"])
           except ValueError as exc:
               raise SystemExit("最大并发数必须是整数") from exc
           if not 1 <= requested <= 20:
               raise SystemExit("最大并发数必须在 1 到 20 之间")
-          max_parallel = min(requested, count)
+          max_parallel = min(requested, count, 20)
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
               output.write(f"indices={json.dumps(list(range(1, count + 1)))}\n")
               output.write(f"max_parallel={max_parallel}\n")
-          print(f"账号数={count}，并发上限={max_parallel}，网络=直连，每个任务=1个账号")
+          print(
+              f"账号文件总数={available_count}，本次任务数={count}，"
+              f"并发上限={max_parallel}，网络=直连，每个任务=1个账号"
+          )
           PY
 
   deps-cache:

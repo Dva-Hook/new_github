@@ -101,6 +101,7 @@ def test_request_verification_email_uses_overview_and_email_card_selectors(
 ) -> None:
     clicked: list[str] = []
     navigated: list[tuple[str, str]] = []
+    sleeps: list[float] = []
 
     class Element:
         def __init__(self, name: str) -> None:
@@ -124,6 +125,7 @@ def test_request_verification_email_uses_overview_and_email_card_selectors(
         "navigate_with_retry",
         lambda page, url, description: navigated.append((url, description)),
     )
+    monkeypatch.setattr(target.time, "sleep", lambda seconds: sleeps.append(seconds))
 
     before = datetime.now(timezone.utc) - timedelta(seconds=31)
     requested_at = target.request_verification_email(object())
@@ -134,32 +136,33 @@ def test_request_verification_email_uses_overview_and_email_card_selectors(
         (target.EMAIL_DETAILS_URL, "Battle.net 电子邮箱详情页")
     ]
     assert clicked == ["resend"]
+    assert sleeps == [5.0]
 
 
-def test_confirm_email_verified_reloads_live_email_card(monkeypatch) -> None:
+def test_open_verification_link_waits_for_document_complete(monkeypatch) -> None:
     page = object()
-    navigated: list[tuple[str, str]] = []
+    navigated: list[tuple[str, str, float]] = []
+    waited: list[float] = []
 
-    monkeypatch.setattr(target, "wait_for_verification_success", lambda *a, **k: True)
     monkeypatch.setattr(
         target,
         "navigate_with_retry",
-        lambda page, url, description: navigated.append((url, description)),
+        lambda page, url, description, timeout: navigated.append(
+            (url, description, timeout)
+        ),
     )
     monkeypatch.setattr(
         target,
-        "wait_email_verified",
-        lambda *args, **kwargs: {
-            "verified": True,
-            "unverified": False,
-            "href": target.EMAIL_DETAILS_URL,
-        },
+        "wait_document_complete",
+        lambda page, timeout: waited.append(timeout) or True,
     )
 
-    assert target.confirm_email_verified(page, timeout=20) is True
+    link = "https://account.battle.net/overview?ticket=fresh"
+    assert target.open_verification_link(page, link, timeout=20) is True
     assert navigated == [
-        (target.EMAIL_DETAILS_URL, "Battle.net 电子邮箱详情确认页")
+        (link, "Battle.net 邮箱验证链接", 20.0)
     ]
+    assert waited == [20]
 
 
 def test_verifier_requests_fresh_mail_before_polling(
@@ -209,10 +212,9 @@ def test_verifier_requests_fresh_mail_before_polling(
     monkeypatch.setattr(target, "poll_verification_link", poll)
     monkeypatch.setattr(
         target,
-        "navigate_with_retry",
-        lambda *args, **kwargs: calls.append("open-link"),
+        "open_verification_link",
+        lambda *args, **kwargs: calls.append("open-link") or True,
     )
-    monkeypatch.setattr(target, "confirm_email_verified", lambda *a, **k: True)
     monkeypatch.setattr(target, "close_cached_ruyi_browser", lambda *a, **k: None)
 
     result = target.verify_registered_email(

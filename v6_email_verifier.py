@@ -33,7 +33,6 @@ from v5_email_verifier import (
     navigate_with_retry,
     poll_verification_link,
     wait_element,
-    wait_for_verification_success,
 )
 
 
@@ -176,30 +175,48 @@ def request_verification_email(page: Any) -> Optional[datetime]:
             return None
         raise RuntimeError("verification-resend-link-not-found")
 
-    # Keep a small clock-skew allowance while excluding stale messages from
-    # previous accounts/runs. The timestamp is captured before the click so a
-    # very fast Graph delivery cannot race ahead of the filter boundary.
+    # The timestamp is captured before the click so a very fast Graph delivery
+    # cannot race ahead of the filter boundary. Match the established V5-style
+    # mailbox flow by giving Battle.net five seconds to enqueue the message
+    # before the first Graph read.
     requested_at = datetime.now(timezone.utc) - timedelta(seconds=30)
     _click_element(resend)
     LOG.info("已点击 Battle.net 重新发送验证邮件链接: selector=%s", used_selector)
+    time.sleep(5.0)
+    LOG.info("重新发送后已等待 5 秒，开始读取验证邮件")
     return requested_at
 
 
-def confirm_email_verified(page: Any, timeout: float) -> bool:
-    """Confirm the ticket succeeded and the live e-mail card is verified."""
+def wait_document_complete(page: Any, timeout: float) -> bool:
+    deadline = time.monotonic() + max(0.1, float(timeout))
+    while time.monotonic() < deadline:
+        with contextlib.suppress(Exception):
+            state = page.run_js(
+                "return {href: String(location.href || ''), "
+                "readyState: String(document.readyState || '')};",
+                timeout=5,
+            )
+            if (
+                isinstance(state, dict)
+                and state.get("readyState") == "complete"
+                and str(state.get("href") or "").startswith(("http://", "https://"))
+            ):
+                return True
+        time.sleep(0.25)
+    return False
 
-    ticket_confirmed = wait_for_verification_success(page, timeout)
-    if not ticket_confirmed and not wait_email_verified(page, timeout=3.0).get(
-        "verified"
-    ):
+
+def open_verification_link(page: Any, link: str, timeout: float) -> bool:
+    navigate_with_retry(
+        page,
+        link,
+        "Battle.net 邮箱验证链接",
+        timeout=max(10.0, float(timeout)),
+    )
+    if not wait_document_complete(page, timeout):
         return False
-    try:
-        navigate_with_retry(page, EMAIL_DETAILS_URL, "Battle.net 电子邮箱详情确认页")
-    except Exception as exc:
-        LOG.warning("邮箱验证后重新打开账号详情页失败: %s", type(exc).__name__)
-        return False
-    final_state = wait_email_verified(page, timeout=min(max(timeout, 5.0), 20.0))
-    return bool(final_state.get("verified"))
+    LOG.info("验证链接已在当前登录浏览器中加载完成")
+    return True
 
 
 def _message_text(message: dict[str, Any]) -> str:
@@ -503,12 +520,15 @@ def verify_registered_email(
             scanned,
             matching,
         )
-        navigate_with_retry(page, link, "Battle.net 邮箱验证链接")
-        if not confirm_email_verified(page, float(args.email_verification_timeout)):
+        if not open_verification_link(
+            page,
+            link,
+            float(args.email_verification_timeout),
+        ):
             return EmailVerificationResult(
                 False,
                 "verification_not_confirmed",
-                "已打开验证链接，但账号邮箱卡片未确认 Email Verified",
+                "已打开验证链接，但页面未在等待时间内加载完成",
                 scanned,
                 matching,
             )
@@ -533,13 +553,14 @@ def verify_registered_email(
 
 __all__ = [
     "complete_email_security_challenge",
-    "confirm_email_verified",
     "detect_email_security_stage",
     "extract_battlenet_security_code",
     "find_security_code",
     "poll_security_code",
     "read_email_verified_state",
     "request_verification_email",
+    "open_verification_link",
     "verify_registered_email",
+    "wait_document_complete",
     "wait_email_verified",
 ]

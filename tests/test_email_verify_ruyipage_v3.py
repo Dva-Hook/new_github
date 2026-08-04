@@ -151,7 +151,7 @@ def test_args_limit_concurrency_to_twenty() -> None:
     try:
         target._validate_args(bad)
     except ValueError as exc:
-        assert "between 1 and 20" in str(exc)
+        assert "1 到 20" in str(exc)
     else:
         raise AssertionError("parallelism above 20 was accepted")
 
@@ -186,6 +186,30 @@ def test_render_successful_accounts_uses_v3_format() -> None:
     )
 
 
+def test_remove_successful_accounts_keeps_failed_blocks(tmp_path: Path) -> None:
+    source = tmp_path / "oath2_account.v3.txt"
+    source.write_text(
+        "账号：success@example.com\n"
+        "密码：success-pass\n"
+        "API：success@example.com----mail-pass----client-id----token-one\n\n"
+        "账号：failed@example.com\n"
+        "密码：failed-pass\n"
+        "API：failed@example.com----mail-pass----client-id----token-two\n",
+        encoding="utf-8",
+    )
+
+    result = target.remove_successful_account_records(
+        source,
+        ["SUCCESS@example.com"],
+    )
+
+    assert result["removed"] == 1
+    remaining = source.read_text(encoding="utf-8")
+    assert "success@example.com" not in remaining
+    assert "账号：failed@example.com" in remaining
+    assert "token-two" in remaining
+
+
 def test_github_workflow_uses_direct_matrix_allocation() -> None:
     workflow = (
         Path(__file__).resolve().parents[1]
@@ -198,6 +222,13 @@ def test_github_workflow_uses_direct_matrix_allocation() -> None:
     assert "max-parallel: ${{ fromJSON(needs.prepare.outputs.max_parallel) }}" in workflow
     assert "--account-index \"$ACCOUNT_INDEX\"" in workflow
     assert "--max-parallel 1" in workflow
-    assert "network=direct" in workflow
+    assert "每个任务=1个账号" in workflow
     assert "--proxy" not in workflow
-    assert "at most 256 account jobs" in workflow
+    assert "最多支持 256 个账号任务" in workflow
+    assert "max-parallel: ${{ fromJSON(needs.prepare.outputs.max_parallel) }}" in workflow
+    assert "if: always()" in workflow
+    assert "失败任务也生成结果文件" in workflow
+    assert "从账号文件删除验证成功账号" in workflow
+    assert "git add oath2_account.v3.txt" in workflow
+    assert "contents: write" in workflow
+    assert "邮箱验证V3-全部结果" in workflow

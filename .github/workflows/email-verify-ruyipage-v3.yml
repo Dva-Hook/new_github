@@ -1,31 +1,33 @@
-name: Email Verify V3 (RuyiPage Direct)
+name: 邮箱验证 V3（RuyiPage 直连）
+
+run-name: 邮箱验证 V3 / 并发 ${{ inputs.max_parallel }}
 
 on:
   workflow_dispatch:
     inputs:
       max_parallel:
-        description: "Maximum concurrent account jobs (1-20)"
+        description: "最大并发任务数（1-20）；每个任务只验证一个账号"
         required: true
         default: "20"
         type: string
       login_timeout:
-        description: "Battle.net login timeout per account in seconds"
+        description: "每个账号的战网登录超时时间（秒）"
         required: true
         default: "120"
         type: string
       mail_timeout:
-        description: "Microsoft Graph mailbox timeout per account in seconds"
+        description: "每个账号的邮箱读取超时时间（秒）"
         required: true
         default: "180"
         type: string
       verification_timeout:
-        description: "Verification-link page load timeout per account in seconds"
+        description: "每个账号的验证链接加载超时时间（秒）"
         required: true
         default: "30"
         type: string
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: email-verify-v3-${{ github.repository }}-${{ github.ref_name }}
@@ -33,15 +35,16 @@ concurrency:
 
 jobs:
   prepare:
+    name: 准备账号矩阵（最多256个）
     runs-on: ubuntu-latest
     outputs:
       indices: ${{ steps.matrix.outputs.indices }}
       max_parallel: ${{ steps.matrix.outputs.max_parallel }}
     steps:
-      - name: Checkout
+      - name: 检出代码
         uses: actions/checkout@v5
 
-      - name: Validate oath2_account.v3.txt and build matrix
+      - name: 检查账号文件并生成矩阵
         id: matrix
         env:
           REQUESTED_MAX_PARALLEL: ${{ inputs.max_parallel }}
@@ -54,7 +57,7 @@ jobs:
 
           path = Path("oath2_account.v3.txt")
           if not path.is_file():
-              raise SystemExit(f"account file does not exist: {path}")
+              raise SystemExit(f"账号文件不存在：{path}")
           text = path.read_text(encoding="utf-8-sig")
           account_rows = [
               line for line in text.splitlines()
@@ -71,69 +74,71 @@ jobs:
           count = len(account_rows)
           if count < 1 or len(password_rows) != count or len(api_rows) != count:
               raise SystemExit(
-                  "oath2_account.v3.txt must contain complete account/password/API blocks"
+                  "oath2_account.v3.txt 必须包含完整的账号、密码、API 三行记录"
               )
           if count > 256:
-              raise SystemExit("GitHub matrix supports at most 256 account jobs per run")
+              raise SystemExit("GitHub 矩阵每次最多支持 256 个账号任务")
           try:
               requested = int(os.environ["REQUESTED_MAX_PARALLEL"])
           except ValueError as exc:
-              raise SystemExit("max_parallel must be an integer") from exc
+              raise SystemExit("最大并发数必须是整数") from exc
           if not 1 <= requested <= 20:
-              raise SystemExit("max_parallel must be between 1 and 20")
+              raise SystemExit("最大并发数必须在 1 到 20 之间")
           max_parallel = min(requested, count)
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
               output.write(f"indices={json.dumps(list(range(1, count + 1)))}\n")
               output.write(f"max_parallel={max_parallel}\n")
-          print(f"accounts={count} maxParallel={max_parallel} network=direct")
+          print(f"账号数={count}，并发上限={max_parallel}，网络=直连，每个任务=1个账号")
           PY
 
   deps-cache:
+    name: 准备验证依赖
     needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - name: Checkout
+      - name: 检出代码
         uses: actions/checkout@v5
 
-      - name: Set up Python
+      - name: 设置 Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Cache verifier virtual environment
+      - name: 缓存验证环境
         id: venv
         uses: actions/cache@v5
         with:
           path: .venv
           key: email-verify-v3-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage-v5.txt', 'requirements-ruyipage-v4.txt') }}
 
-      - name: Build verifier virtual environment
+      - name: 创建验证环境
         if: steps.venv.outputs.cache-hit != 'true'
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
           .venv/bin/pip install -r requirements-ruyipage-v5.txt
 
-      - name: Cache RuyiPage Firefox runtime
+      - name: 缓存 RuyiPage Firefox 运行时
         id: ruyi-runtime
         uses: actions/cache@v5
         with:
           path: ~/.cache/ruyipage
           key: ruyipage-firefox-${{ runner.os }}-v1
 
-      - name: Ensure RuyiPage runtime is healthy
+      - name: 检查 RuyiPage 运行时
         run: |
           if ! .venv/bin/python -m ruyipage doctor >/dev/null 2>&1; then
             .venv/bin/python -m ruyipage install
           fi
           .venv/bin/python -m ruyipage doctor
 
-      - name: Validate Python imports
+      - name: 检查 Python 依赖
         run: |
           .venv/bin/python -c "import email_verify_ruyipage_v3; print('email verifier dependencies ready')"
 
   verify:
+    name: 验证账号 ${{ matrix.index }}
     needs: [prepare, deps-cache]
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -143,29 +148,29 @@ jobs:
       matrix:
         index: ${{ fromJSON(needs.prepare.outputs.indices) }}
     steps:
-      - name: Checkout
+      - name: 检出代码
         uses: actions/checkout@v5
 
-      - name: Set up Python
+      - name: 设置 Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Restore verifier virtual environment
+      - name: 恢复验证环境
         id: venv
         uses: actions/cache@v5
         with:
           path: .venv
           key: email-verify-v3-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage-v5.txt', 'requirements-ruyipage-v4.txt') }}
 
-      - name: Restore RuyiPage Firefox runtime
+      - name: 恢复 RuyiPage Firefox 运行时
         id: ruyi-runtime
         uses: actions/cache@v5
         with:
           path: ~/.cache/ruyipage
           key: ruyipage-firefox-${{ runner.os }}-v1
 
-      - name: Repair missing cached dependencies
+      - name: 修复缺失的缓存依赖
         if: steps.venv.outputs.cache-hit != 'true' || steps.ruyi-runtime.outputs.cache-hit != 'true'
         run: |
           if [ ! -x .venv/bin/python ]; then
@@ -178,14 +183,15 @@ jobs:
           fi
           .venv/bin/python -m ruyipage doctor
 
-      - name: Ensure Xvfb is available
+      - name: 检查 Xvfb
         run: |
           if ! command -v xvfb-run >/dev/null 2>&1 || ! command -v xauth >/dev/null 2>&1; then
             sudo apt-get update -qq
             sudo apt-get install -y -qq xvfb xauth
           fi
 
-      - name: Verify one account over direct network
+      - name: 验证单个账号（直连）
+        id: verify_account
         env:
           ACCOUNT_INDEX: ${{ matrix.index }}
           LOGIN_TIMEOUT: ${{ inputs.login_timeout }}
@@ -205,28 +211,97 @@ jobs:
               --output-dir email_verify_ruyipage_v3/runs \
               --cache-dir ".cache/email_verify_browser_profile_${ACCOUNT_INDEX}"
 
-      - name: Upload account verification result
+      - name: 确保失败任务也生成结果文件
+        if: always()
+        env:
+          ACCOUNT_INDEX: ${{ matrix.index }}
+          VERIFY_OUTCOME: ${{ steps.verify_account.outcome }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          root = Path("email_verify_ruyipage_v3/runs")
+          if any(root.glob("**/results.jsonl")):
+              print("账号验证结果文件已生成")
+              raise SystemExit(0)
+
+          index = int(os.environ["ACCOUNT_INDEX"])
+          source = Path("oath2_account.v3.txt")
+          account_re = re.compile(
+              r"^(?:账号|帳號|account)\s*[:：]\s*(.+)$",
+              re.I,
+          )
+          emails = []
+          if source.is_file():
+              for line in source.read_text(encoding="utf-8-sig").splitlines():
+                  match = account_re.match(line.strip())
+                  if match:
+                      emails.append(match.group(1).strip())
+          email = emails[index - 1] if 0 < index <= len(emails) else "未知账号"
+          job_dir = root / f"job_{index:04d}_failed"
+          job_dir.mkdir(parents=True, exist_ok=True)
+          row = {
+              "sourceIndex": index,
+              "email": email,
+              "ok": False,
+              "status": "job_failed",
+              "statusText": "验证失败：任务未生成正常结果",
+              "resultText": "验证失败",
+              "note": f"GitHub 任务结果：{os.environ.get('VERIFY_OUTCOME') or 'unknown'}",
+              "scannedMessages": 0,
+              "matchingMessages": 0,
+              "elapsedSeconds": 0,
+              "outputDir": str(job_dir),
+          }
+          (job_dir / "results.jsonl").write_text(
+              json.dumps(row, ensure_ascii=False) + "\n",
+              encoding="utf-8",
+          )
+          (job_dir / "summary.json").write_text(
+              json.dumps(
+                  {"total": 1, "success": 0, "failure": 1,
+                   "总数": 1, "成功": 0, "失败": 1},
+                  ensure_ascii=False,
+                  indent=2,
+              ),
+              encoding="utf-8",
+          )
+          (job_dir / "run.log").write_text(
+              f"账号：{email}\n结果：验证失败\n原因：{row['note']}\n",
+              encoding="utf-8",
+          )
+          print(f"已为失败任务生成结果：账号={email}")
+          PY
+
+      - name: 上传账号验证结果（成功或失败）
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: email-verify-v3-result-${{ matrix.index }}
+          name: 邮箱验证V3-账号-${{ matrix.index }}
           path: email_verify_ruyipage_v3/runs/**
-          if-no-files-found: ignore
+          if-no-files-found: error
           compression-level: 9
 
   collect:
+    name: 汇总结果并删除成功账号
     needs: [prepare, verify]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Download account results
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 下载所有账号结果
         continue-on-error: true
         uses: actions/download-artifact@v7
         with:
-          pattern: email-verify-v3-result-*
+          pattern: 邮箱验证V3-账号-*
           path: all_email_verification_results
 
-      - name: Merge result files
+      - name: 汇总成功和失败结果
         run: |
           python3 - <<'PY'
           import json
@@ -252,25 +327,124 @@ jobs:
               ("\n\n".join(verified_chunks) + "\n") if verified_chunks else "",
               encoding="utf-8",
           )
+          failed_rows = [row for row in rows if not bool(row.get("ok"))]
+          Path("failed_accounts_v3.jsonl").write_text(
+              "".join(
+                  json.dumps(row, ensure_ascii=False) + "\n"
+                  for row in failed_rows
+              ),
+              encoding="utf-8",
+          )
           summary = {
               "total": len(rows),
               "success": sum(bool(row.get("ok")) for row in rows),
               "failure": sum(not bool(row.get("ok")) for row in rows),
+              "总数": len(rows),
+              "成功": sum(bool(row.get("ok")) for row in rows),
+              "失败": sum(not bool(row.get("ok")) for row in rows),
+              "并发上限": 20,
+              "单个任务账号数": 1,
           }
           Path("email_verification_summary.json").write_text(
               json.dumps(summary, ensure_ascii=False, indent=2),
               encoding="utf-8",
           )
-          print(summary)
+          print(
+              f"汇总完成：总数={summary['总数']}，"
+              f"成功={summary['成功']}，失败={summary['失败']}"
+          )
           PY
 
-      - name: Upload aggregate verification results
+      - name: 从账号文件删除验证成功账号
+        id: cleanup_accounts
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          source = Path("oath2_account.v3.txt")
+          results = Path("email_verification_results.jsonl")
+          successful = set()
+          if results.is_file():
+              for line in results.read_text(encoding="utf-8").splitlines():
+                  if not line.strip():
+                      continue
+                  row = json.loads(line)
+                  if bool(row.get("ok")) and str(row.get("email") or "").strip():
+                      successful.add(str(row["email"]).strip().casefold())
+
+          account_re = re.compile(
+              r"^(?:账号|帳號|account)\s*[:：]\s*(.+)$",
+              re.I,
+          )
+          original = source.read_text(encoding="utf-8-sig").splitlines()
+          kept = []
+          removed = []
+          index = 0
+          while index < len(original):
+              match = account_re.match(original[index].strip())
+              if not match:
+                  kept.append(original[index])
+                  index += 1
+                  continue
+              block_end = index + 1
+              while block_end < len(original):
+                  if account_re.match(original[block_end].strip()):
+                      break
+                  block_end += 1
+              email = match.group(1).strip()
+              if email.casefold() in successful:
+                  removed.append(email)
+              else:
+                  kept.extend(original[index:block_end])
+              index = block_end
+
+          if removed:
+              rendered = "\n".join(kept)
+              if kept:
+                  rendered += "\n"
+              temporary = source.with_name(source.name + ".tmp")
+              temporary.write_text(rendered, encoding="utf-8", newline="\n")
+              os.replace(temporary, source)
+
+          cleanup = {
+              "成功结果数": len(successful),
+              "从源文件删除数": len(removed),
+              "删除账号": removed,
+          }
+          Path("source_cleanup.json").write_text(
+              json.dumps(cleanup, ensure_ascii=False, indent=2),
+              encoding="utf-8",
+          )
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"removed={len(removed)}\n")
+          print(
+              f"源文件清理完成：成功结果={len(successful)}，"
+              f"已删除账号={len(removed)}"
+          )
+          PY
+
+      - name: 提交清理后的账号文件
+        if: steps.cleanup_accounts.outputs.removed != '0'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add oath2_account.v3.txt
+          git commit -m "清理已验证成功的邮箱账号 [skip ci]"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      - name: 上传全部验证结果
+        if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: ALL-email-verify-v3-results
+          name: 邮箱验证V3-全部结果
           path: |
             email_verification_results.jsonl
             email_verification_summary.json
             verified_accounts_v3.txt
+            failed_accounts_v3.jsonl
+            source_cleanup.json
           if-no-files-found: error
           compression-level: 9

@@ -19,6 +19,7 @@ import argparse
 import contextlib
 import json
 import logging
+import os
 import re
 import sys
 import time
@@ -41,6 +42,7 @@ DEFAULT_ACCOUNTS_FILE = PROJECT_ROOT / "oath2_account.v3.txt"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "email_verify_ruyipage_v3" / "runs"
 DEFAULT_CACHE_DIR = PROJECT_ROOT / ".cache" / "email_verify_browser_profiles"
 MAX_PARALLEL = 20
+MAX_ACCOUNTS = 256
 
 LOG = logging.getLogger("http_register_v6.concurrent_email_verifier")
 
@@ -69,6 +71,21 @@ _LABEL_PATTERNS = {
     "api": re.compile(r"^api\s*[:：]\s*(.*)$", re.IGNORECASE),
 }
 
+_STATUS_TEXT = {
+    "already_verified": "已验证",
+    "no_unverified_banner": "已登录且没有未验证邮箱横幅",
+    "logged_in_after_email_code": "登录成功并完成邮箱验证码",
+    "verified": "验证成功",
+    "verification_mail_missing": "验证失败：未读取到验证邮件",
+    "verification_not_confirmed": "验证失败：验证链接未确认成功",
+    "verification_error": "验证失败：运行异常",
+    "login_failed": "验证失败：登录失败",
+    "manual_email_code": "验证失败：邮箱验证码未完成",
+    "manual_security_check": "验证失败：安全检查未完成",
+    "worker_error": "验证失败：任务进程异常",
+    "not_started": "验证失败：任务未启动",
+}
+
 
 @dataclass(frozen=True)
 class AccountRecord:
@@ -90,11 +107,14 @@ class AccountResult:
     output_dir: Path
 
     def to_dict(self) -> dict[str, Any]:
+        status_text = _STATUS_TEXT.get(self.result.status, self.result.status)
         return {
             "sourceIndex": self.account.source_index,
             "email": self.account.email,
             "ok": self.result.ok,
             "status": self.result.status,
+            "statusText": status_text,
+            "resultText": "验证成功" if self.result.ok else "验证失败",
             "note": self.result.note,
             "scannedMessages": self.result.scanned_messages,
             "matchingMessages": self.result.matching_messages,
@@ -177,13 +197,13 @@ def parse_account_records(text: str) -> list[AccountRecord]:
     if pending_email is not None:
         raise ValueError(f"line {pending_line}: account is missing password or API")
     if not records:
-        raise ValueError("account file contains no accounts")
+        raise ValueError("账号文件中没有账号")
     return records
 
 
 def read_account_records(path: Path) -> list[AccountRecord]:
     if not path.is_file():
-        raise FileNotFoundError(f"account file does not exist: {path}")
+        raise FileNotFoundError(f"账号文件不存在：{path}")
     return parse_account_records(path.read_text(encoding="utf-8-sig"))
 
 
@@ -197,7 +217,7 @@ def select_account_records(
         return list(accounts)
     if index < 1 or index > len(accounts):
         raise IndexError(
-            f"--account-index must be 1..{len(accounts)} (or 0 for all accounts)"
+            f"--account-index 必须是 1..{len(accounts)}（或使用 0 处理全部账号）"
         )
     return [accounts[index - 1]]
 
@@ -296,7 +316,7 @@ def _verify_after_login(
     # This verifier intentionally treats the absence of the requested overview
     # banner as a successful account state, as requested for the standalone flow.
     if not has_visible_unverified_banner(page):
-        LOG.info("%s: no visible unverified-email banner; treating login as successful", account.email)
+        LOG.info("%s：没有未验证邮箱横幅，判定登录成功", account.email)
         return EmailVerificationResult(
             True,
             "no_unverified_banner",
@@ -325,7 +345,7 @@ def _verify_after_login(
     matching = max(matching, matching_now)
 
     if not link:
-        LOG.warning("%s: three empty mailbox reads; requesting one more message", account.email)
+        LOG.warning("%s：连续三次没有读到邮件，再次请求验证邮件", account.email)
         retry_requested_at = v6.request_verification_email(
             page,
             check_overview_banner=False,
@@ -380,7 +400,7 @@ def verify_account(
     result = EmailVerificationResult(False, "not_started", "")
     direct_proxy = v4.ProxySettings(None, "direct")
     try:
-        LOG.info("[%s] starting direct RuyiPage verification", account.email)
+        LOG.info("[%s] 开始使用 RuyiPage 直连验证", account.email)
         page, actual_cache_dir = v6.launch_cached_ruyi_browser(
             job_args,
             direct_proxy,
@@ -394,9 +414,17 @@ def verify_account(
             not_before=datetime.now(timezone.utc) - timedelta(seconds=30),
         )
         if result.ok:
-            LOG.info("[%s] verification finished: %s", account.email, result.status)
+            LOG.info(
+                "[%s] 验证成功：%s",
+                account.email,
+                _STATUS_TEXT.get(result.status, result.status),
+            )
         else:
-            LOG.warning("[%s] verification failed: %s", account.email, result.note)
+            LOG.warning(
+                "[%s] 验证失败：%s",
+                account.email,
+                result.note or _STATUS_TEXT.get(result.status, result.status),
+            )
         return AccountResult(
             account,
             result,
@@ -404,7 +432,7 @@ def verify_account(
             account_dir,
         )
     except Exception as exc:
-        LOG.exception("[%s] verification raised %s", account.email, type(exc).__name__)
+        LOG.exception("[%s] 验证异常：%s", account.email, type(exc).__name__)
         result = EmailVerificationResult(
             False,
             "verification_error",
@@ -444,19 +472,71 @@ def render_account_records(accounts: Iterable[AccountRecord]) -> str:
     )
 
 
+def remove_successful_account_records(
+    path: Path | str, emails: Iterable[str]
+) -> dict[str, Any]:
+    """Atomically remove successful V3 blocks and preserve all other records."""
+
+    source_path = Path(path).expanduser().resolve()
+    if not source_path.is_file():
+        raise FileNotFoundError(f"账号文件不存在：{source_path}")
+    successful = {
+        str(email or "").strip().casefold()
+        for email in emails
+        if str(email or "").strip()
+    }
+    original_lines = source_path.read_text(encoding="utf-8-sig").splitlines()
+    if not successful:
+        return {"requested": 0, "removed": 0, "removedEmails": []}
+
+    kept: list[str] = []
+    removed: list[str] = []
+    index = 0
+    while index < len(original_lines):
+        line = original_lines[index].strip()
+        match = _LABEL_PATTERNS["email"].match(line)
+        if not match:
+            kept.append(original_lines[index])
+            index += 1
+            continue
+
+        block_end = index + 1
+        while block_end < len(original_lines):
+            if _LABEL_PATTERNS["email"].match(original_lines[block_end].strip()):
+                break
+            block_end += 1
+        email = match.group(1).strip()
+        if email.casefold() in successful:
+            removed.append(email)
+        else:
+            kept.extend(original_lines[index:block_end])
+        index = block_end
+
+    if removed:
+        rendered = "\n".join(kept)
+        if kept:
+            rendered += "\n"
+        temporary = source_path.with_name(source_path.name + ".tmp")
+        temporary.write_text(rendered, encoding="utf-8", newline="\n")
+        os.replace(temporary, source_path)
+    return {
+        "requested": len(successful),
+        "removed": len(removed),
+        "removedEmails": removed,
+    }
+
+
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Concurrent direct RuyiPage verification for V6-exported accounts"
-    )
+    parser = argparse.ArgumentParser(description="并发直连验证 V6 导出的战网账号邮箱")
     parser.add_argument("--accounts", default=str(DEFAULT_ACCOUNTS_FILE))
     parser.add_argument(
         "--account-index",
         type=int,
         default=0,
-        help="one-based account index for a GitHub matrix job; 0 processes all accounts",
+        help="GitHub 矩阵任务使用从 1 开始的账号序号；0 表示处理全部账号",
     )
     parser.add_argument("--max-parallel", type=int, default=MAX_PARALLEL)
-    parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--headless", action="store_true", help="无界面运行浏览器")
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
     parser.add_argument("--cache-dir", default=str(DEFAULT_CACHE_DIR))
     parser.add_argument("--email-login-timeout", type=float, default=120.0)
@@ -468,7 +548,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
 
 def _validate_args(args: argparse.Namespace) -> None:
     if not 1 <= int(args.max_parallel) <= MAX_PARALLEL:
-        raise ValueError(f"--max-parallel must be between 1 and {MAX_PARALLEL}")
+        raise ValueError(f"--max-parallel 必须在 1 到 {MAX_PARALLEL} 之间")
     if min(
         float(args.email_login_timeout),
         float(args.email_mail_timeout),
@@ -483,10 +563,12 @@ def run(args: argparse.Namespace) -> int:
     output_root = Path(args.output_dir).expanduser().resolve()
     cache_root = Path(args.cache_dir).expanduser().resolve()
     all_accounts = read_account_records(accounts_path)
+    if len(all_accounts) > MAX_ACCOUNTS:
+        raise ValueError(f"账号数量不能超过 {MAX_ACCOUNTS} 个")
     accounts = select_account_records(all_accounts, int(args.account_index))
     if args.check_inputs:
         for index, account in enumerate(accounts, 1):
-            print(f"{index}: {account.email}")
+            print(f"账号 {index}：{account.email}")
         return 0
 
     run_dir = output_root / f"run_{time.strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:8]}"
@@ -500,12 +582,16 @@ def run(args: argparse.Namespace) -> int:
             "sourceAccountCount": len(all_accounts),
             "accountIndex": int(args.account_index),
             "maxParallel": int(args.max_parallel),
-            "network": "direct",
-            "browser": "ruyipage",
+            "network": "直连",
+            "browser": "RuyiPage",
             "apiCredentialFields": "email----mailbox_password----client_id----refresh_token",
         },
     )
-    LOG.info("input accounts=%d maxParallel=%d network=direct", len(accounts), args.max_parallel)
+    LOG.info(
+        "开始验证：本任务账号数=%d，并发上限=%d，网络=直连，浏览器=RuyiPage",
+        len(accounts),
+        args.max_parallel,
+    )
 
     results: list[AccountResult] = []
     with ThreadPoolExecutor(max_workers=int(args.max_parallel), thread_name_prefix="email-v3") as executor:
@@ -542,17 +628,35 @@ def run(args: argparse.Namespace) -> int:
         render_account_records(successful_accounts),
         encoding="utf-8",
     )
+    removal = remove_successful_account_records(
+        accounts_path,
+        [account.email for account in successful_accounts],
+    )
+    _write_json(run_dir / "source_cleanup.json", removal)
+    if removal["removed"]:
+        LOG.info("已从账号文件删除 %d 个验证成功账号", removal["removed"])
     summary = {
         "total": len(results),
         "success": sum(item.result.ok for item in results),
         "failure": sum(not item.result.ok for item in results),
         "maxParallel": int(args.max_parallel),
-        "network": "direct",
-        "browser": "ruyipage",
+        "network": "直连",
+        "browser": "RuyiPage",
+        "总数": len(results),
+        "成功": sum(item.result.ok for item in results),
+        "失败": sum(not item.result.ok for item in results),
+        "成功账号已从源文件删除": int(removal["removed"]),
         "runDir": str(run_dir),
     }
     _write_json(run_dir / "summary.json", summary)
-    LOG.info("complete success=%d failure=%d output=%s", summary["success"], summary["failure"], run_dir)
+    LOG.info(
+        "验证完成：总数=%d，成功=%d，失败=%d，已删除源文件账号=%d，输出目录=%s",
+        summary["total"],
+        summary["success"],
+        summary["failure"],
+        removal["removed"],
+        run_dir,
+    )
     return 0 if summary["failure"] == 0 else 1
 
 
@@ -564,10 +668,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     try:
         return run(args)
     except KeyboardInterrupt:
-        print("\ninterrupted", file=sys.stderr)
+        print("\n任务已中断", file=sys.stderr)
         return 130
     except Exception as exc:
-        print(f"input/runtime error: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"输入或运行错误：{type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
 
 

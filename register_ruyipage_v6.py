@@ -10,12 +10,13 @@ from pathlib import Path
 
 import register_ruyipage_v5 as v5
 import v6_email_pool
+import v6_email_verifier
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "ruyipage_http_v6_register" / "runs"
 _V5_BUILD_PARSER = v5.build_parser
-_V5_VERIFY_REGISTERED_EMAIL = v5.verify_registered_email
+_V5_VERIFY_REGISTERED_EMAIL = v6_email_verifier.verify_registered_email
 
 
 def _map_v6_environment() -> None:

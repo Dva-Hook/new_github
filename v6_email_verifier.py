@@ -32,11 +32,26 @@ from v5_email_verifier import (
     login_battle_net,
     navigate_with_retry,
     poll_verification_link,
+    wait_element,
     wait_for_verification_success,
 )
 
 
 LOG = logging.getLogger("http_register_v6.email_verifier")
+OVERVIEW_VERIFICATION_BANNER_SELECTOR = (
+    "#app > main > section.main-content-section > div > "
+    "div.blz-alert.top-banner-alert > meka-notification-banner > div > span > "
+    "span.banner-link > a"
+)
+EMAIL_DETAILS_URL = "https://account.battle.net/details#email-card"
+EMAIL_DETAILS_RESEND_SELECTOR = (
+    "#email-card > div.blz-card-alert > div > div > "
+    "meka-notification-banner > div > span > span > span:nth-child(2) > a"
+)
+EMAIL_DETAILS_RESEND_FALLBACK_SELECTORS = (
+    "#email-card .blz-card-alert meka-notification-banner a",
+    "#email-card .blz-card-alert a",
+)
 EMAIL_CODE_BOX_SELECTORS = tuple(
     "#password-form > div.control-group.input-container.has-code-input "
     f"> div > div > div:nth-child({index})"
@@ -47,7 +62,8 @@ EMAIL_VERIFIED_STATE_JS = r"""return (() => {
   const text = String(document.body?.innerText || '');
   const normalized = text.replace(/\s+/g, ' ').trim();
   const verified = /\bemail\s+verified\b/i.test(normalized)
-    || /邮箱(?:已经|已)验证|电子邮箱(?:已经|已)验证/.test(normalized);
+    || /(?:电子)?邮箱(?:已经|已)验证/.test(normalized)
+    || /(?:电子)?邮箱.{0,160}?(?:已经|已)验证/.test(normalized);
   const unverified = /\bemail\s+(?:not\s+verified|unverified)\b/i.test(normalized)
     || /\bverify\s+(?:your\s+)?email\b/i.test(normalized)
     || /邮箱未验证|验证(?:您的)?邮箱/.test(normalized);
@@ -105,6 +121,85 @@ def wait_email_verified(page: Any, timeout: float = 10.0) -> dict[str, Any]:
                 return last
         time.sleep(0.5)
     return last
+
+
+def _optional_element(page: Any, selector: str, timeout: float) -> Any:
+    try:
+        return wait_element(page, selector, timeout)
+    except TimeoutError:
+        return None
+
+
+def _click_element(element: Any) -> None:
+    try:
+        element.click()
+    except Exception:
+        element.click(by_js=True)
+
+
+def request_verification_email(page: Any) -> Optional[datetime]:
+    """Open the e-mail card and request a fresh Battle.net verification link.
+
+    The overview banner is treated as a useful unverified-state marker, not as
+    the only way to reach the e-mail card. Going to the canonical details URL
+    keeps the flow working when login lands on another account page or when the
+    overview banner is rendered late.
+    """
+
+    banner = _optional_element(
+        page,
+        OVERVIEW_VERIFICATION_BANNER_SELECTOR,
+        timeout=6.0,
+    )
+    if banner is not None:
+        LOG.info("检测到 Battle.net 账号概览页的邮箱未验证横幅")
+    else:
+        LOG.warning("账号页未找到邮箱未验证横幅，继续直接检查电子邮箱卡片")
+
+    navigate_with_retry(page, EMAIL_DETAILS_URL, "Battle.net 电子邮箱详情页")
+
+    resend = _optional_element(
+        page,
+        EMAIL_DETAILS_RESEND_SELECTOR,
+        timeout=20.0,
+    )
+    used_selector = EMAIL_DETAILS_RESEND_SELECTOR
+    if resend is None:
+        for selector in EMAIL_DETAILS_RESEND_FALLBACK_SELECTORS:
+            resend = _optional_element(page, selector, timeout=2.0)
+            if resend is not None:
+                used_selector = selector
+                break
+    if resend is None:
+        state = wait_email_verified(page, timeout=2.0)
+        if state.get("verified"):
+            return None
+        raise RuntimeError("verification-resend-link-not-found")
+
+    # Keep a small clock-skew allowance while excluding stale messages from
+    # previous accounts/runs. The timestamp is captured before the click so a
+    # very fast Graph delivery cannot race ahead of the filter boundary.
+    requested_at = datetime.now(timezone.utc) - timedelta(seconds=30)
+    _click_element(resend)
+    LOG.info("已点击 Battle.net 重新发送验证邮件链接: selector=%s", used_selector)
+    return requested_at
+
+
+def confirm_email_verified(page: Any, timeout: float) -> bool:
+    """Confirm the ticket succeeded and the live e-mail card is verified."""
+
+    ticket_confirmed = wait_for_verification_success(page, timeout)
+    if not ticket_confirmed and not wait_email_verified(page, timeout=3.0).get(
+        "verified"
+    ):
+        return False
+    try:
+        navigate_with_retry(page, EMAIL_DETAILS_URL, "Battle.net 电子邮箱详情确认页")
+    except Exception as exc:
+        LOG.warning("邮箱验证后重新打开账号详情页失败: %s", type(exc).__name__)
+        return False
+    final_state = wait_email_verified(page, timeout=min(max(timeout, 5.0), 20.0))
+    return bool(final_state.get("verified"))
 
 
 def _message_text(message: dict[str, Any]) -> str:
@@ -354,9 +449,33 @@ def verify_registered_email(
                 matching,
             )
 
+        try:
+            requested_at = request_verification_email(page)
+        except Exception as exc:
+            LOG.warning(
+                "Battle.net 验证邮件发送触发失败: %s",
+                type(exc).__name__,
+            )
+            return EmailVerificationResult(
+                False,
+                "verification_mail_request_failed",
+                "账号未验证，但未能点击 Battle.net 重新发送验证邮件链接",
+                scanned,
+                matching,
+            )
+        if requested_at is None:
+            LOG.info("进入邮箱详情页后账号已显示 Email Verified: %s", credential.email)
+            return EmailVerificationResult(
+                True,
+                "already_verified",
+                "",
+                scanned,
+                matching,
+            )
+
         link, link_scanned, link_matching = poll_verification_link(
             credential,
-            not_before=not_before,
+            not_before=max(not_before, requested_at),
             timeout=float(args.email_mail_timeout),
         )
         scanned = max(scanned, link_scanned)
@@ -385,13 +504,11 @@ def verify_registered_email(
             matching,
         )
         navigate_with_retry(page, link, "Battle.net 邮箱验证链接")
-        if not wait_for_verification_success(
-            page, float(args.email_verification_timeout)
-        ) and not wait_email_verified(page, timeout=3.0).get("verified"):
+        if not confirm_email_verified(page, float(args.email_verification_timeout)):
             return EmailVerificationResult(
                 False,
                 "verification_not_confirmed",
-                "已打开验证链接，但页面未确认验证成功",
+                "已打开验证链接，但账号邮箱卡片未确认 Email Verified",
                 scanned,
                 matching,
             )
@@ -416,12 +533,13 @@ def verify_registered_email(
 
 __all__ = [
     "complete_email_security_challenge",
+    "confirm_email_verified",
     "detect_email_security_stage",
     "extract_battlenet_security_code",
     "find_security_code",
     "poll_security_code",
     "read_email_verified_state",
+    "request_verification_email",
     "verify_registered_email",
     "wait_email_verified",
 ]
-

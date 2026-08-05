@@ -57,6 +57,37 @@ def test_v6_workflow_quarantines_login_form_without_retrying() -> None:
     assert 'success_path = Path("pool_removal_emails.txt")' in text
 
 
+def test_v6_workflow_uploads_pending_email_accounts_only_when_present() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    register_steps = workflow["jobs"]["register"]["steps"]
+    export_step = next(
+        step for step in register_steps if step.get("name") == "导出成功账号"
+    )
+    account_upload = next(
+        step for step in register_steps if step.get("name") == "上传 V6 账号数据"
+    )
+    assert "is_email_verification_pending" in export_step["run"]
+    assert 'Path("email_pending_account.txt")' in export_step["run"]
+    assert "email_pending_account.txt" in account_upload["with"]["path"]
+
+    collect_steps = workflow["jobs"]["collect"]["steps"]
+    collect_step = next(
+        step for step in collect_steps if step.get("name") == "汇总账号与邮箱状态"
+    )
+    pending_upload = next(
+        step for step in collect_steps if step.get("name") == "上传邮箱待验证账号"
+    )
+    original_upload = next(
+        step for step in collect_steps if step.get("name") == "上传 V6 汇总结果"
+    )
+    assert "email_pending_account.txt" in collect_step["run"]
+    assert 'Path("email_pending_accounts.txt")' in collect_step["run"]
+    assert pending_upload["if"] == "${{ hashFiles('email_pending_accounts.txt') != '' }}"
+    assert pending_upload["with"]["name"] == "ALL-邮箱待验证"
+    assert pending_upload["with"]["path"] == "email_pending_accounts.txt"
+    assert "email_pending_accounts.txt" not in original_upload["with"]["path"]
+
+
 def test_v6_registration_shell_block_has_valid_bash_syntax() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     steps = workflow["jobs"]["register"]["steps"]

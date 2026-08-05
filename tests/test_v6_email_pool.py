@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from v6_email_pool import (
+    is_email_verification_pending,
     load_email_pool,
     parse_credential_line,
     remove_consumed_emails,
@@ -78,3 +79,32 @@ def test_v6_remove_consumed_keeps_unconsumed_raw_line(tmp_path: Path) -> None:
     assert result["remaining"] == 1
     assert pool.read_text(encoding="utf-8") == second + "\n"
 
+
+def test_v6_pending_email_verification_requires_an_attempted_failure() -> None:
+    failed = {
+        "ok": True,
+        "emailSource": "pool",
+        "emailVerification": {
+            "ok": False,
+            "status": "verification_mail_missing",
+        },
+    }
+    verified = {
+        **failed,
+        "emailVerification": {"ok": True, "status": "verified"},
+    }
+    skipped = {
+        **failed,
+        "emailVerification": {"ok": True, "status": "skipped"},
+    }
+    not_requested = {
+        **failed,
+        "emailVerification": {"ok": False, "status": "not_requested"},
+    }
+
+    assert is_email_verification_pending(failed) is True
+    assert is_email_verification_pending(verified) is False
+    assert is_email_verification_pending(skipped) is False
+    assert is_email_verification_pending(not_requested) is False
+    assert is_email_verification_pending({**failed, "emailSource": "generated"}) is False
+    assert is_email_verification_pending({**failed, "ok": False}) is False

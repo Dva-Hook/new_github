@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -179,14 +180,27 @@ def credential_map(path: Path | str) -> dict[str, EmailCredential]:
     return {item.email.casefold(): item for item in load_email_pool(path)}
 
 
+def is_email_verification_pending(result: object) -> bool:
+    """Return whether a successful pool registration has a failed mail check."""
+    if not isinstance(result, Mapping):
+        return False
+    if result.get("ok") is not True or result.get("emailSource") != "pool":
+        return False
+    verification = result.get("emailVerification")
+    if not isinstance(verification, Mapping) or verification.get("ok") is not False:
+        return False
+    status = str(verification.get("status") or "").strip().lower()
+    return status not in {"", "not_requested", "skipped"}
+
+
 __all__ = [
     "DELIMITER",
     "EmailCredential",
     "credential_map",
+    "is_email_verification_pending",
     "load_email_pool",
     "parse_credential_line",
     "remove_consumed_emails",
     "select_email_credential",
     "validate_pool_capacity",
 ]
-

@@ -624,7 +624,10 @@ jobs:
           import json
           from pathlib import Path
 
-          from v6_email_pool import credential_map
+          from v6_email_pool import (
+              credential_map,
+              is_email_verification_pending,
+          )
 
           root = Path("ruyipage_http_v6_register/runs")
           pool_path = Path("Email_registing_v6.txt")
@@ -632,6 +635,7 @@ jobs:
               credential_map(pool_path) if pool_path.is_file() else {}
           )
           records = []
+          pending_records = []
           consumed = set()
           seen = set()
           for account_path in sorted(root.glob("run_*/account_generated.json")):
@@ -655,9 +659,10 @@ jobs:
               if credential is not None:
                   api_line = credential.raw_line
                   lines.append(f"API：{api_line}")
-              records.append(
-                  "\n".join(lines)
-              )
+              record = "\n".join(lines)
+              records.append(record)
+              if is_email_verification_pending(result):
+                  pending_records.append(record)
               if str(result.get("emailSource") or "") == "pool":
                   consumed.add(email)
           if records:
@@ -669,7 +674,15 @@ jobs:
                   "\n".join(sorted(consumed, key=str.casefold)) + "\n",
                   encoding="utf-8",
               )
-          print(f"已恢复 {len(records)} 个成功账号，待消费邮箱 {len(consumed)} 个")
+          if pending_records:
+              Path("email_pending_account.txt").write_text(
+                  "\n\n".join(pending_records) + "\n",
+                  encoding="utf-8",
+              )
+          print(
+              f"已恢复 {len(records)} 个成功账号，待消费邮箱 {len(consumed)} 个，"
+              f"邮箱待验证 {len(pending_records)} 个"
+          )
           PY
 
       - name: 上传 V6 运行数据
@@ -690,6 +703,7 @@ jobs:
           name: V6-账号-${{ matrix.index }}
           path: |
             registered_account.txt
+            email_pending_account.txt
             consumed_email.txt
             already_registered_email.txt
           if-no-files-found: ignore
@@ -728,6 +742,21 @@ jobs:
               (output + "\n") if output else "（没有成功账号）\n",
               encoding="utf-8",
           )
+          pending_files = sorted(
+              Path("all_accounts").glob("**/email_pending_account.txt")
+          )
+          pending_chunks = [
+              path.read_text(encoding="utf-8").strip()
+              for path in pending_files
+          ]
+          pending_output = "\n\n".join(
+              chunk for chunk in pending_chunks if chunk
+          ).strip()
+          if pending_output:
+              Path("email_pending_accounts.txt").write_text(
+                  pending_output + "\n",
+                  encoding="utf-8",
+              )
           consumed = set()
           for path in Path("all_accounts").glob("**/consumed_email.txt"):
               consumed.update(
@@ -760,6 +789,7 @@ jobs:
           )
           print(
               f"已合并 {len(files)} 个账号文件，成功邮箱 {len(consumed)} 个，"
+              f"邮箱待验证 {len(pending_files)} 个，"
               f"原本已注册邮箱 {len(already_registered)} 个"
           )
           PY
@@ -824,5 +854,14 @@ jobs:
             already_registered_emails.txt
             pool_removal_emails.txt
             email_pool_update.json
+          if-no-files-found: error
+          compression-level: 9
+
+      - name: 上传邮箱待验证账号
+        if: ${{ hashFiles('email_pending_accounts.txt') != '' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: ALL-邮箱待验证
+          path: email_pending_accounts.txt
           if-no-files-found: error
           compression-level: 9

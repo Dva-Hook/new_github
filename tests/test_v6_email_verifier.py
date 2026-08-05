@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import v6_email_verifier as target
+import v5_email_verifier as v5
 from v5_email_verifier import EmailVerificationResult
 from v6_email_pool import parse_credential_line
 
@@ -465,3 +466,98 @@ def test_verifier_does_not_poll_when_resend_cannot_be_triggered(
 
     assert result.ok is False
     assert result.status == "verification_mail_request_failed"
+
+
+def test_login_state_classifies_battlenet_email_challenge_without_waiting() -> None:
+    state = {
+        "email_security_stage": "choice",
+        "email_code_challenge_present": True,
+        "security_challenge_present": True,
+    }
+
+    assert (
+        v5._classify_login_state(state, accept_password=False)
+        == "manual_email_code"
+    )
+    assert "email_security_stage" in v5.LOGIN_STATE_JS
+
+
+def test_security_choice_follows_phone_bind_flow_without_immediate_stage_recheck(
+    monkeypatch,
+) -> None:
+    credential = parse_credential_line(
+        "mail@example.com----mail-pass----client-id----refresh-token",
+        source_index=1,
+    ).to_v5()
+    calls: list[object] = []
+
+    class Submit:
+        def click(self, **kwargs) -> None:
+            calls.append(("click", kwargs))
+
+    class Page:
+        def ele(self, selector, timeout=0):
+            assert selector == "#submit"
+            return Submit()
+
+    def detect(*args, **kwargs):
+        calls.append("detect")
+        if calls.count("detect") > 1:
+            raise AssertionError("must not check the stale choice DOM after clicking")
+        return "choice"
+
+    monkeypatch.setattr(target, "detect_email_security_stage", detect)
+    monkeypatch.setattr(
+        target,
+        "poll_security_code",
+        lambda *args, **kwargs: calls.append("poll") or ("A1B2C3", 4, 1),
+    )
+    monkeypatch.setattr(
+        target,
+        "fill_email_security_code",
+        lambda page, code: calls.append(("fill", code)),
+    )
+    monkeypatch.setattr(
+        target,
+        "read_email_verified_state",
+        lambda page: {"verified": True, "href": "https://account.battle.net/overview"},
+    )
+    monkeypatch.setattr(target.time, "sleep", lambda seconds: calls.append(("sleep", seconds)))
+
+    completed, scanned, matching = target.complete_email_security_challenge(
+        Page(),
+        credential,
+        timeout=120,
+        initial_wait=10,
+    )
+
+    assert completed is True
+    assert (scanned, matching) == (4, 1)
+    assert calls == [
+        "detect",
+        ("click", {}),
+        ("sleep", 10),
+        "poll",
+        ("fill", "A1B2C3"),
+    ]
+
+
+def test_security_code_fill_falls_back_to_six_dom_boxes(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+
+    class Page:
+        def run_js(self, script, selector, character, timeout=0):
+            calls.append((selector, character))
+            return {"ok": True, "value": character}
+
+    monkeypatch.setattr(
+        target,
+        "wait_element",
+        lambda *args, **kwargs: (_ for _ in ()).throw(TimeoutError("missing")),
+    )
+    monkeypatch.setattr(target.time, "sleep", lambda seconds: None)
+
+    target.fill_email_security_code(Page(), "A1B2C3")
+
+    assert [character for _, character in calls] == list("A1B2C3")
+    assert [selector for selector, _ in calls] == list(target.EMAIL_CODE_BOX_SELECTORS)

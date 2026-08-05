@@ -511,12 +511,57 @@ def fill_email_security_code(page: Any, code: str) -> None:
     normalized = str(code or "").strip().upper()
     if not re.fullmatch(r"[A-Z0-9]{6}", normalized):
         raise ValueError("邮箱安全码必须是 6 位字母或数字")
-    first = page.ele(EMAIL_CODE_BOX_SELECTORS[0], timeout=15)
+
     try:
-        first.click()
-    except Exception:
-        first.click(by_js=True)
-    page.actions.type(normalized, interval=120).perform()
+        first = wait_element(page, EMAIL_CODE_BOX_SELECTORS[0], 15.0)
+        try:
+            first.click()
+        except Exception:
+            first.click(by_js=True)
+        page.actions.type(normalized, interval=120).perform()
+        return
+    except Exception as exc:
+        LOG.warning("原生 BiDi 键盘填写安全码失败，回退 DOM 逐框填写: %s", exc)
+
+    script = r"""function(selector, character) {
+      const wrapper = document.querySelector(selector);
+      if (!wrapper) return {ok:false, reason:'wrapper-not-found', selector};
+      const element = wrapper.matches('input,[contenteditable="true"]')
+        ? wrapper
+        : wrapper.querySelector('input,[contenteditable="true"]');
+      if (!element) return {ok:false, reason:'input-not-found', selector};
+      element.focus();
+      element.dispatchEvent(new KeyboardEvent('keydown', {
+        key: character, code: 'Key' + character, bubbles: true
+      }));
+      if (element.matches('input')) {
+        const setter = Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype, 'value'
+        )?.set;
+        if (setter) setter.call(element, character);
+        else element.value = character;
+      } else {
+        element.textContent = character;
+      }
+      try {
+        element.dispatchEvent(new InputEvent('input', {
+          bubbles: true, inputType: 'insertText', data: character
+        }));
+      } catch (_) {
+        element.dispatchEvent(new Event('input', {bubbles: true}));
+      }
+      element.dispatchEvent(new Event('change', {bubbles: true}));
+      element.dispatchEvent(new KeyboardEvent('keyup', {
+        key: character, code: 'Key' + character, bubbles: true
+      }));
+      const value = element.matches('input') ? element.value : element.textContent;
+      return {ok:true, value:String(value || ''), selector};
+    }"""
+    for selector, character in zip(EMAIL_CODE_BOX_SELECTORS, normalized):
+        result = page.run_js(script, selector, character, timeout=10)
+        if not isinstance(result, dict) or not result.get("ok"):
+            raise RuntimeError(f"填写邮箱安全码失败: {result}")
+        time.sleep(0.15)
 
 
 def complete_email_security_challenge(
@@ -524,6 +569,7 @@ def complete_email_security_challenge(
     credential: EmailCredential,
     *,
     timeout: float,
+    initial_wait: float = 10.0,
 ) -> tuple[bool, int, int]:
     stage = detect_email_security_stage(page)
     if not stage:
@@ -536,11 +582,12 @@ def complete_email_security_challenge(
             submit.click()
         except Exception:
             submit.click(by_js=True)
-        code_stage = detect_email_security_stage(page, timeout=20.0)
-        if code_stage != "code":
-            raise RuntimeError("邮箱安全验证未进入验证码输入页")
     else:
+        LOG.info("检测到 Battle.net 邮箱安全码输入页")
         requested_at -= timedelta(minutes=10)
+    if initial_wait > 0:
+        LOG.info("等待 %.0f 秒后获取最新 Battle.net 安全码邮件", initial_wait)
+        time.sleep(initial_wait)
     code, scanned, matching = poll_security_code(
         credential,
         not_before=requested_at,

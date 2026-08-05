@@ -301,6 +301,8 @@ LOGIN_STATE_JS = r"""return (() => {
     'a[href*="/overview"], a[href*="/details"]'
   );
   const pageText = String(document.body?.innerText || '').toLowerCase();
+  const href = String(location.href || '');
+  const challengePage = /\/challenge\//i.test(href);
   const codeChallenge = anyVisible([
     'input[autocomplete="one-time-code"]',
     'input[id*="security" i]',
@@ -312,6 +314,8 @@ LOGIN_STATE_JS = r"""return (() => {
     'input[id="code" i]',
     'input[name="code" i]'
   ].join(','));
+  const challengeCodeGroup = challengePage
+    && anyVisible('#password-form .has-code-input');
   const methodChallenge = Array.from(document.querySelectorAll('form')).some(
     (form) => anyVisible('select', form)
       && anyVisible('button[type="submit"], input[type="submit"], button:not([type])', form)
@@ -320,7 +324,14 @@ LOGIN_STATE_JS = r"""return (() => {
     (form) => anyVisible('.challenge-body input, .challenge-body select', form)
       && anyVisible('button[type="submit"], input[type="submit"], button:not([type])', form)
   );
+  const challengeChoice = challengePage
+    && anyVisible('#submit')
+    && !passwordInput
+    && (/e-mail|email|mailbox|邮箱|邮件/.test(pageText)
+      || pageText.includes('@')
+      || anyVisible('select, input[type="radio"], [role="listbox"]'));
   const securityChallenge = codeChallenge || dynamicChallenge
+    || challengeCodeGroup || challengeChoice
     || (!loginForm && !protectedShell && methodChallenge);
   const emailWords = /e-mail|email|mailbox|邮箱|邮件|verification code|security code/.test(pageText);
   const errorNodes = Array.from(document.querySelectorAll(
@@ -330,7 +341,6 @@ LOGIN_STATE_JS = r"""return (() => {
   const loginErrorText = errorNodes
     .map((item) => String(item.innerText || item.textContent || '').trim())
     .filter(Boolean).join(' ').slice(0, 240);
-  const href = String(location.href || '');
   return {
     href,
     account_input_present: accountInput,
@@ -338,7 +348,9 @@ LOGIN_STATE_JS = r"""return (() => {
     login_form_present: loginForm,
     success_marker_present: successMarker,
     protected_shell_present: protectedShell,
-    email_code_challenge_present: securityChallenge && emailWords,
+    email_security_stage: challengeCodeGroup ? 'code' : (challengeChoice ? 'choice' : ''),
+    email_code_challenge_present: (securityChallenge && emailWords)
+      || challengeCodeGroup || challengeChoice,
     security_challenge_present: securityChallenge,
     overview_url: /account\.battle\.net\/overview(?:[/?#]|$)/i.test(href),
     login_error_text: loginErrorText,
@@ -541,6 +553,8 @@ def _classify_login_state(
     *,
     accept_password: bool,
 ) -> Optional[str]:
+    if state.get("email_security_stage") in {"choice", "code"}:
+        return "manual_email_code"
     if state.get("email_code_challenge_present"):
         return "manual_email_code"
     if state.get("security_challenge_present"):

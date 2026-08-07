@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 import v6_email_verifier as target
 import v5_email_verifier as v5
 from v5_email_verifier import EmailVerificationResult
@@ -33,6 +35,46 @@ def test_email_verified_state_recognizes_overview_text() -> None:
     state = target.read_email_verified_state(Page())
 
     assert state["verified"] is True
+
+
+def test_overview_verification_uses_semantic_security_card_signals() -> None:
+    script = target.OVERVIEW_EMAIL_VERIFIED_STATE_JS
+
+    assert "account-overview-security" in script
+    assert ".security-option" in script
+    assert "email\\s+verified" in script
+    assert "check-circle" in script
+    assert "nth-child" not in script
+
+
+def test_email_verification_browser_forces_english_locale() -> None:
+    calls: list[object] = []
+
+    class Page:
+        def set_locale(self, locales) -> None:
+            calls.append(("set-locale", locales))
+
+        def run_js(self, script, timeout=0):
+            calls.append(("run-js", script, timeout))
+            return {"language": "en-US", "languages": ["en-US", "en"]}
+
+    state = v5.configure_email_browser_english(Page())
+
+    assert state == {"language": "en-US", "languages": ["en-US", "en"]}
+    assert calls[0] == ("set-locale", ["en-US", "en"])
+    assert calls[1][0] == "run-js"
+
+
+def test_email_verification_browser_rejects_non_english_locale() -> None:
+    class Page:
+        def set_locale(self, locales) -> None:
+            pass
+
+        def run_js(self, script, timeout=0):
+            return {"language": "zh-CN", "languages": ["zh-CN", "zh"]}
+
+    with pytest.raises(RuntimeError, match="英文 locale 校验失败"):
+        v5.configure_email_browser_english(Page())
 
 
 def test_verifier_stops_when_overview_already_says_email_verified(
@@ -201,7 +243,21 @@ def test_request_verification_email_uses_semantic_dom_fallback_when_selector_cha
 
 
 def test_open_verification_link_waits_for_document_complete(monkeypatch) -> None:
-    page = object()
+    events: list[object] = []
+
+    class OverviewTab:
+        def close(self) -> None:
+            events.append("overview-close")
+
+    class Page:
+        def new_tab(self, url, background=False):
+            events.append(("new-tab", url, background))
+            return OverviewTab()
+
+        def activate(self) -> None:
+            events.append("activate-original")
+
+    page = Page()
     navigated: list[tuple[str, str, float]] = []
     waited: list[float] = []
 
@@ -217,13 +273,54 @@ def test_open_verification_link_waits_for_document_complete(monkeypatch) -> None
         "wait_document_complete",
         lambda page, timeout: waited.append(timeout) or True,
     )
+    monkeypatch.setattr(
+        target,
+        "wait_overview_email_verified",
+        lambda page, timeout: {
+            "verified": True,
+            "source": "security-card-text",
+        },
+    )
 
     link = "https://account.battle.net/overview?ticket=fresh"
     assert target.open_verification_link(page, link, timeout=20) is True
     assert navigated == [
-        (link, "Battle.net 邮箱验证链接", 20.0)
+        (link, "Battle.net 邮箱验证链接", 20.0),
+        (target.OVERVIEW_URL, "Battle.net 账号概览页验证状态", 20.0),
     ]
-    assert waited == [20]
+    assert waited == [20, 20]
+    assert events == [
+        ("new-tab", "about:blank", False),
+        "overview-close",
+        "activate-original",
+    ]
+
+
+def test_open_verification_link_requires_overview_email_verified(monkeypatch) -> None:
+    class OverviewTab:
+        def close(self) -> None:
+            pass
+
+    class Page:
+        def new_tab(self, url, background=False):
+            return OverviewTab()
+
+        def activate(self) -> None:
+            pass
+
+    monkeypatch.setattr(target, "navigate_with_retry", lambda *args, **kwargs: None)
+    monkeypatch.setattr(target, "wait_document_complete", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        target,
+        "wait_overview_email_verified",
+        lambda *args, **kwargs: {
+            "verified": False,
+            "unverified": True,
+            "source": "security-card-text",
+        },
+    )
+
+    assert target.open_verification_link(Page(), "https://example.test/link", 20) is False
 
 
 def test_verifier_requests_fresh_mail_before_polling(

@@ -123,6 +123,61 @@ EMAIL_VERIFIED_STATE_JS = r"""return (() => {
   };
 })();"""
 
+OVERVIEW_URL = "https://account.battle.net/overview"
+OVERVIEW_EMAIL_VERIFIED_STATE_JS = r"""return (() => {
+  const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+  const isVisible = (node) => {
+    if (!node) return false;
+    const style = getComputedStyle(node);
+    const rect = node.getBoundingClientRect();
+    return style.display !== 'none' && style.visibility !== 'hidden'
+      && rect.width > 0 && rect.height > 0;
+  };
+  const cards = Array.from(document.querySelectorAll('.blz-card'));
+  const securityCard = cards.find((card) => {
+    if (card.classList.contains('account-overview-security')) return true;
+    const heading = normalize(card.querySelector('h2,h3')?.textContent);
+    return /security\s+checkup|安全检查|安全检查项/i.test(heading);
+  });
+  const scopedCard = securityCard && isVisible(securityCard) ? securityCard : null;
+  const optionNodes = scopedCard
+    ? Array.from(scopedCard.querySelectorAll(
+        '.security-option, [class*="security-option"]'
+      )).filter(isVisible)
+    : [];
+  const verifiedOption = optionNodes.find((node) =>
+    /^email\s+verified$/i.test(normalize(node.innerText || node.textContent))
+    || /^(?:电子)?邮箱(?:已经|已)验证$/i.test(
+      normalize(node.innerText || node.textContent)
+    )
+  );
+  const verifiedRow = verifiedOption?.closest('.row');
+  const checkIcon = !!verifiedRow?.querySelector(
+    '.fa-check-circle, [data-icon="check-circle"], [class*="check-circle"]'
+  );
+  const cardText = normalize(scopedCard?.innerText);
+  const verified = !!verifiedOption || (
+    !!scopedCard && /\bemail\s+verified\b/i.test(cardText)
+  );
+  const unverified = !!scopedCard && (
+    /\bemail\s+(?:not\s+verified|unverified)\b/i.test(cardText)
+    || /\bverify\s+(?:your\s+)?email\b/i.test(cardText)
+    || /邮箱未验证|验证(?:您的)?邮箱/.test(cardText)
+  );
+  return {
+    href: String(location.href || ''),
+    readyState: String(document.readyState || ''),
+    cardFound: !!scopedCard,
+    verified,
+    unverified,
+    checkIcon,
+    source: verifiedOption ? 'security-card-option' : (
+      verified ? 'security-card-text' : ''
+    ),
+    text: cardText.slice(0, 1200)
+  };
+})();"""
+
 EMAIL_SECURITY_STAGE_JS = r"""return (() => {
   const href = String(location.href || '');
   const selectors = %s;
@@ -166,6 +221,24 @@ def wait_email_verified(page: Any, timeout: float = 10.0) -> dict[str, Any]:
         with contextlib.suppress(Exception):
             last = read_email_verified_state(page)
             if last.get("verified") or last.get("unverified"):
+                return last
+        time.sleep(0.5)
+    return last
+
+
+def read_overview_email_verified_state(page: Any) -> dict[str, Any]:
+    state = page.run_js(OVERVIEW_EMAIL_VERIFIED_STATE_JS, timeout=10)
+    return dict(state) if isinstance(state, dict) else {}
+
+
+def wait_overview_email_verified(page: Any, timeout: float = 20.0) -> dict[str, Any]:
+    """Wait for the overview security card to confirm the mailbox state."""
+    deadline = time.monotonic() + max(0.1, float(timeout))
+    last: dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        with contextlib.suppress(Exception):
+            last = read_overview_email_verified_state(page)
+            if last.get("verified"):
                 return last
         time.sleep(0.5)
     return last
@@ -369,7 +442,38 @@ def open_verification_link(page: Any, link: str, timeout: float) -> bool:
     if not wait_document_complete(page, timeout):
         return False
     LOG.info("验证链接已在当前登录浏览器中加载完成")
-    return True
+    overview_tab: Any = None
+    try:
+        overview_tab = page.new_tab("about:blank", background=False)
+        navigate_with_retry(
+            overview_tab,
+            OVERVIEW_URL,
+            "Battle.net 账号概览页验证状态",
+            timeout=max(10.0, float(timeout)),
+        )
+        if not wait_document_complete(overview_tab, timeout):
+            LOG.warning("账号概览页未在等待时间内完成加载")
+            return False
+        state = wait_overview_email_verified(overview_tab, timeout=timeout)
+        if state.get("verified"):
+            LOG.info(
+                "账号概览页确认 Email Verified: source=%s checkIcon=%s",
+                state.get("source") or "unknown",
+                bool(state.get("checkIcon")),
+            )
+            return True
+        LOG.warning(
+            "账号概览页未确认 Email Verified: cardFound=%s text=%r",
+            bool(state.get("cardFound")),
+            str(state.get("text") or "")[:240],
+        )
+        return False
+    finally:
+        if overview_tab is not None:
+            with contextlib.suppress(Exception):
+                overview_tab.close()
+        with contextlib.suppress(Exception):
+            page.activate()
 
 
 def _message_text(message: dict[str, Any]) -> str:
@@ -793,7 +897,11 @@ __all__ = [
     "read_email_verified_state",
     "request_verification_email",
     "open_verification_link",
+    "OVERVIEW_URL",
+    "OVERVIEW_EMAIL_VERIFIED_STATE_JS",
+    "read_overview_email_verified_state",
     "verify_registered_email",
     "wait_document_complete",
     "wait_email_verified",
+    "wait_overview_email_verified",
 ]

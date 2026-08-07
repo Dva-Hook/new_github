@@ -35,6 +35,7 @@ DEFAULT_EMAIL_BROWSER_CACHE_DIR = (
     Path(__file__).resolve().parent / ".cache" / "v5_email_browser_profile"
 )
 PROFILE_MARKER_NAME = ".v5_email_verification_profile"
+EMAIL_BROWSER_LOCALES = ("en-US", "en")
 FIREFOX_PROXY_PREF_LINE = re.compile(
     r"^\s*(?:user_)?pref\(\s*['\"]network\.proxy\.[^'\"]+['\"]\s*,",
     re.IGNORECASE,
@@ -154,6 +155,40 @@ def sanitize_cached_profile(
     return removed
 
 
+def configure_email_browser_english(page: Any) -> dict[str, Any]:
+    """Force and verify the locale used by the RuyiPage email browser."""
+
+    setter = getattr(page, "set_locale", None)
+    if not callable(setter):
+        raise RuntimeError("当前 RuyiPage 不支持 set_locale，无法保证英文页面")
+
+    setter(list(EMAIL_BROWSER_LOCALES))
+    state = page.run_js(
+        "return {language: navigator.language, "
+        "languages: Array.from(navigator.languages || [])};",
+        timeout=10,
+    )
+    normalized = dict(state) if isinstance(state, dict) else {}
+    language = str(normalized.get("language") or "").strip()
+    languages = [
+        str(value).strip()
+        for value in (normalized.get("languages") or [])
+        if str(value).strip()
+    ]
+    if not language.lower().startswith("en"):
+        raise RuntimeError(
+            f"RuyiPage 英文 locale 校验失败: language={language!r} "
+            f"languages={languages!r}"
+        )
+
+    LOG.info(
+        "邮箱验证浏览器语言已固定为英文: language=%s languages=%s",
+        language,
+        languages,
+    )
+    return {"language": language, "languages": languages}
+
+
 def launch_cached_ruyi_browser(
     args: Any,
     proxy: Any,
@@ -197,6 +232,7 @@ def launch_cached_ruyi_browser(
             failure_snapshot=True,
             snapshot_dir=str(snapshot_dir),
         )
+        configure_email_browser_english(page)
     except Exception:
         with contextlib.suppress(Exception):
             sanitize_cached_profile(cache_dir)
@@ -928,9 +964,11 @@ def verify_registered_email(
 
 
 __all__ = [
+    "EMAIL_BROWSER_LOCALES",
     "EmailVerificationResult",
     "clear_cached_proxy_preferences",
     "close_cached_ruyi_browser",
+    "configure_email_browser_english",
     "direct_battlenet_link",
     "extract_battlenet_link",
     "find_link",

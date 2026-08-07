@@ -108,7 +108,7 @@ def write_json(path: Path, value: Any) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = v4.build_parser()
     parser.description = (
-        "Persistent HTTP registration + selectable browser + selectable solver"
+        "持久 HTTP 注册 + 可选浏览器 + 可选求解器"
     )
     parser.set_defaults(
         output_dir=str(DEFAULT_OUTPUT_ROOT),
@@ -133,13 +133,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--country",
         default=os.environ.get("V5_COUNTRY", DEFAULT_REGISTRATION_COUNTRY),
-        help="ISO 3166-1 alpha-3 registration country code (default: USA)",
+        help="ISO 3166-1 三字母注册国家代码（默认：USA）",
     )
     parser.add_argument(
         "--email-source",
         choices=("generated", "pool"),
         default=os.environ.get("V5_EMAIL_SOURCE", "generated").lower(),
-        help="generated or one deterministic row from Email_registing.txt",
+        help="使用生成邮箱，或从 Email_registing.txt 确定性分配一行",
     )
     parser.add_argument(
         "--email-pool-file",
@@ -160,8 +160,8 @@ def build_parser() -> argparse.ArgumentParser:
             str(PROJECT_ROOT / ".cache" / "v5_email_browser_profile"),
         ),
         help=(
-            "RuyiPage Firefox profile cache for supplied-email verification; "
-            "identity state is removed before and after every use"
+            "用于指定邮箱验证的 RuyiPage Firefox 配置缓存；"
+            "每次使用前后都会删除身份状态"
         ),
     )
     parser.add_argument(
@@ -192,8 +192,8 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("proxy", "proxyless"),
         default=os.environ.get("V5_CAPMONSTER_PROXY_MODE", "proxy").lower(),
         help=(
-            "proxy passes the selected registration proxy to CapMonster; "
-            "proxyless uses CapMonster's own network"
+            "proxy 会把所选注册代理传给 CapMonster；"
+            "proxyless 使用 CapMonster 自身网络"
         ),
     )
     parser.add_argument("--capmonster-timeout", type=float, default=300.0)
@@ -205,8 +205,8 @@ def build_parser() -> argparse.ArgumentParser:
             ",".join(DEFAULT_PROXY_DIRECT_HOSTS),
         ),
         help=(
-            "comma-separated public static hosts that bypass the upstream proxy; "
-            "blank disables split routing"
+            "用逗号分隔的公共静态资源直连域名；"
+            "留空则禁用分流"
         ),
     )
     parser.add_argument("--cloak-locale", default="en-GB")
@@ -344,13 +344,13 @@ def solve_with_capmonster(
         proxy.display
         if use_proxy
         else (
-            "CapMonster proxyless (registration route is direct)"
+            "CapMonster 无代理模式（注册线路为直连）"
             if requested_proxy
-            else "CapMonster proxyless (explicitly selected)"
+            else "CapMonster 无代理模式（已明确选择）"
         )
     )
     LOG.info(
-        "CapMonster task: type=%s mode=%s route=%s",
+        "CapMonster 任务：类型=%s，模式=%s，线路=%s",
         task["type"],
         task_mode,
         route_note,
@@ -369,10 +369,10 @@ def solve_with_capmonster(
     task_id = created.get("taskId")
     if not task_id or int(created.get("errorId") or 0):
         raise RuntimeError(
-            f"CapMonster 创建任务失败: errorCode={created.get('errorCode')} "
-            f"errorDescription={created.get('errorDescription')}"
+            f"CapMonster 创建任务失败：错误代码={created.get('errorCode')}，"
+            f"错误说明={created.get('errorDescription')}"
         )
-    LOG.info("CapMonster 任务已创建: taskId=%s blobLength=%s", task_id, len(blob))
+    LOG.info("CapMonster 任务已创建：任务 ID=%s，blob 长度=%s", task_id, len(blob))
 
     deadline = time.monotonic() + float(args.capmonster_timeout)
     polls = 0
@@ -412,13 +412,13 @@ def solve_with_capmonster(
                 _redacted_provider_response(last),
             )
             raise RuntimeError(
-                f"CapMonster task failed: errorCode={last.get('errorCode')} "
-                f"errorDescription={last.get('errorDescription')}"
+                f"CapMonster 任务失败：错误代码={last.get('errorCode')}，"
+                f"错误说明={last.get('errorDescription')}"
             )
         time.sleep(float(args.capmonster_poll_interval))
     write_json(out / "capmonster_result.json", _redacted_provider_response(last))
     raise TimeoutError(
-        f"CapMonster task {task_id} timed out after {args.capmonster_timeout}s"
+        f"CapMonster 任务 {task_id} 在 {args.capmonster_timeout} 秒后超时"
     )
 
 
@@ -486,7 +486,7 @@ class V5RuyiYesCaptchaImageCatcher(v4.v3.RuyiArkoseImageCatcher):
                     if not valid_rtig and not valid_generic:
                         seen.add(sha)
                         LOG.info(
-                            "[%s] 忽略非题目图片 size=%sx%s url=%s",
+                            "[%s] 忽略非题目图片：尺寸=%sx%s，网址=%s",
                             self.label,
                             width,
                             height,
@@ -538,13 +538,13 @@ def solver_terminal_reason(page: Any) -> str:
     completed = state.get("completedPayload")
     rejection = v4.v3.completion_rejection_reason(completed)
     if rejection:
-        return f"Arkose completion rejected: {rejection}"
+        return f"Arkose 完成结果被拒绝：{rejection}"
     if status in _TERMINAL_SOLVER_STATUSES:
         detail = str(state.get("error") or "").strip()
         suffix = f": {detail}" if detail else ""
-        return f"Arkose solver terminal status: {status}{suffix}"
+        return f"Arkose 求解器已进入终止状态：{status}{suffix}"
     if v4.base.captcha_state(page) == "rejected":
-        return "Arkose challenge page is rejected"
+        return "Arkose 验证页面已被拒绝"
     return ""
 
 
@@ -593,7 +593,7 @@ def click_next_n_v4(page: Any, count: int, args: argparse.Namespace) -> bool:
             after = v4.v3.wait_index_change(page, before)
             if before < 0 or after != before:
                 LOG.info(
-                    "第 %s/%s 次点击成功: before=%s after=%s",
+                    "第 %s/%s 次点击成功：点击前=%s，点击后=%s",
                     index + 1,
                     count,
                     before,
@@ -602,8 +602,8 @@ def click_next_n_v4(page: Any, count: int, args: argparse.Namespace) -> bool:
                 clicked = True
                 break
             LOG.warning(
-                "第 %s/%s 次点击可能未生效: retry=%s "
-                "before=%s after=%s",
+                "第 %s/%s 次点击可能未生效：重试=%s，"
+                "点击前=%s，点击后=%s",
                 index + 1,
                 count,
                 attempt + 1,
@@ -614,7 +614,7 @@ def click_next_n_v4(page: Any, count: int, args: argparse.Namespace) -> bool:
             return False
         if index + 1 < count:
             delay = random.randint(minimum, maximum) / 1000.0
-            LOG.info("等待 %sms 后点击下一张箭头", round(delay * 1000))
+            LOG.info("等待 %s 毫秒后点击下一张箭头", round(delay * 1000))
             time.sleep(delay)
     return True
 
@@ -675,7 +675,7 @@ def auto_solve_yescaptcha_tab(
             sample = v4.base.captcha_text(solver_tab).replace("\n", " ")[:260]
             return {
                 "ok": False,
-                "error": f"no new challenge image at wave={wave}, state={state}",
+                "error": f"第 {wave} 轮没有新题图，状态={state}",
                 "actions": actions,
                 "sample": sample,
             }
@@ -715,15 +715,15 @@ def auto_solve_yescaptcha_tab(
                 str(item) for item in (api_result.get("reasons") or [])
             ) or "unknown"
             LOG.info(
-                "YesCaptcha 同图恢复 wave=%s retries=%s "
-                "reasons=%s reencoded=%s",
+                "YesCaptcha 同图恢复：轮次=%s，重试=%s，"
+                "原因=%s，重新编码=%s",
                 wave,
                 retries,
                 reasons,
                 bool(api_result.get("imageReencoded")),
             )
         LOG.info(
-            "YesCaptcha 答案=%s wave=%s question=%r",
+            "YesCaptcha 答案=%s，轮次=%s，题目=%r",
             answer,
             wave,
             question["prompt"],
@@ -731,7 +731,7 @@ def auto_solve_yescaptcha_tab(
         if not click_next_n_v4(solver_tab, answer, args):
             return {
                 "ok": False,
-                "error": f"failed to click next {answer} times at wave={wave}",
+                "error": f"第 {wave} 轮无法点击下一张 {answer} 次",
                 "actions": actions,
             }
         time.sleep(0.08 + random.random() * 0.08)
@@ -925,7 +925,7 @@ def solve_with_browser(
         )
         if not result.get("ok") or not result.get("token"):
             raise RuntimeError(
-                str(result.get("error") or f"{args.solver} returned no token")
+                str(result.get("error") or f"{args.solver} 未返回 token")
             )
         with contextlib.suppress(Exception):
             catcher.stop()
@@ -1015,7 +1015,7 @@ def main() -> int:
             ):
                 raise RuntimeError("恢复状态中的邮箱与邮箱池分配结果不一致")
             LOG.info(
-                "恢复持久状态: %s status=%s",
+                "恢复持久状态：%s，状态=%s",
                 resume_path,
                 state.data.get("status"),
             )
@@ -1050,16 +1050,16 @@ def main() -> int:
             )
         write_json(out / "account_generated.json", identity)
         write_json(out / "v5_configuration.json", config)
-        LOG.info("输出目录: %s", out)
+        LOG.info("输出目录：%s", out)
         LOG.info(
-            "流程: 持久 HTTP -> %s/%s -> HTTP captcha-gate",
+            "流程：持久 HTTP -> %s/%s -> HTTP captcha-gate",
             args.browser,
             args.solver,
         )
-        LOG.info("注册国家: %s", registration_country)
-        LOG.info("代理线路: %s auth=%s", proxy.display, proxy.has_auth)
+        LOG.info("注册国家：%s", registration_country)
+        LOG.info("代理线路：%s，身份验证=%s", proxy.display, proxy.has_auth)
         LOG.info(
-            "静态资源分流: %s",
+            "静态资源分流：%s",
             (
                 ", ".join(config["proxyDirectHosts"])
                 if config["proxyDirectHosts"]
@@ -1068,8 +1068,8 @@ def main() -> int:
             if proxy.enabled
             else "无需分流（注册网络为直连）",
         )
-        LOG.info("账号: %s", identity["email"])
-        LOG.info("战网昵称: %s", identity["battle_tag"])
+        LOG.info("账号：%s", identity["email"])
+        LOG.info("战网昵称：%s", identity["battle_tag"])
 
         if state.data.get("status") == "complete":
             LOG.info("持久状态已经完成")
@@ -1086,7 +1086,7 @@ def main() -> int:
             )
             runtime_proxy_url = traffic_meter.start()
             LOG.info(
-                "代理流量计已启动: local=%s upstream=%s",
+                "代理流量计已启动：本地=%s，上游=%s",
                 runtime_proxy_url,
                 proxy.display,
             )
@@ -1118,7 +1118,7 @@ def main() -> int:
             traffic_meter
         )
         LOG.info(
-            "Arkose 上下文: source=%s siteKey=%s blobLength=%s",
+            "Arkose 上下文：来源=%s，站点密钥=%s，blob 长度=%s",
             arkose.get("source"),
             arkose.get("siteKey"),
             len(str(arkose.get("blob") or "")),
@@ -1149,7 +1149,7 @@ def main() -> int:
                 )
                 write_json(out / "rank_v11_health.json", health)
                 LOG.info(
-                    "本地 V11 已就绪: device=%s load=%.3fs warmup=%.3fs",
+                    "本地 V11 已就绪：设备=%s，加载=%.3f 秒，预热=%.3f 秒",
                     health.get("device"),
                     float(health.get("model_load_seconds") or 0.0),
                     float(health.get("warmup_seconds") or 0.0),
@@ -1175,7 +1175,7 @@ def main() -> int:
                 "tokenLength": len(token),
             },
         )
-        LOG.info("求解器已返回 Arkose token，长度=%s", len(token))
+        LOG.info("求解器已返回 Arkose 令牌，长度=%s", len(token))
         traffic_snapshots["tokenReady"] = v4.capture_proxy_traffic_snapshot(
             traffic_meter
         )
@@ -1251,7 +1251,7 @@ def main() -> int:
         )
         if not success:
             LOG.error(
-                "captcha-gate 未确认注册成功: status=%s sample=%r",
+                "captcha-gate 未确认注册成功：状态=%s，样例=%r",
                 outcome.get("status"),
                 outcome.get("sample"),
             )
@@ -1278,7 +1278,7 @@ def main() -> int:
         safe_traceback = v4.redact_proxy_text(
             traceback.format_exc(), proxy, args.proxy
         )
-        LOG.error("运行失败: %s\n%s", error_text, safe_traceback)
+        LOG.error("运行失败：%s\n%s", error_text, safe_traceback)
         if state is not None:
             with contextlib.suppress(Exception):
                 state.checkpoint(
@@ -1325,8 +1325,8 @@ def main() -> int:
                 v4.log_proxy_traffic_phases(phase_report)
                 v4.log_proxy_traffic_targets(report)
                 LOG.info(
-                    "代理总流量: upload=%.4f MiB download=%.4f MiB "
-                    "total=%.4f MiB bytes=%s connections=%s failures=%s",
+                    "代理总流量：上传=%.4f MiB，下载=%.4f MiB，"
+                    "总计=%.4f MiB，字节=%s，连接=%s，失败=%s",
                     float(report.get("uploadMiB") or 0.0),
                     float(report.get("downloadMiB") or 0.0),
                     float(report.get("totalMiB") or 0.0),
@@ -1337,8 +1337,8 @@ def main() -> int:
                 direct = dict(report.get("directBypass") or {})
                 if int(direct.get("totalBytes") or 0):
                     LOG.info(
-                        "直连分流流量: upload=%.4f MiB download=%.4f MiB "
-                        "total=%.4f MiB bytes=%s connections=%s failures=%s",
+                        "直连分流流量：上传=%.4f MiB，下载=%.4f MiB，"
+                        "总计=%.4f MiB，字节=%s，连接=%s，失败=%s",
                         float(direct.get("uploadMiB") or 0.0),
                         float(direct.get("downloadMiB") or 0.0),
                         float(direct.get("totalMiB") or 0.0),

@@ -1,18 +1,18 @@
-﻿name: Battle.net auto register (CloakBrowser)
+﻿name: 战网自动注册（CloakBrowser）
 
 on:
   workflow_dispatch:
     inputs:
       capmonster_key:
-        description: "CapMonster Cloud API Key (optional fallback)"
+        description: "CapMonster Cloud API 密钥（可选备用）"
         required: false
         default: ""
       count:
-        description: "parallel registration count (1-256)"
+        description: "注册任务数量（1-256）"
         required: false
         default: "1"
       max_parallel:
-        description: "max parallel jobs"
+        description: "最大并发任务数"
         required: false
         default: "10"
 
@@ -27,7 +27,7 @@ jobs:
       indices: ${{ steps.gen.outputs.indices }}
       max_parallel: ${{ steps.gen.outputs.max_parallel }}
     steps:
-      - name: Generate matrix
+      - name: 生成任务矩阵
         id: gen
         run: |
           N=${{ github.event.inputs.count }}
@@ -39,21 +39,21 @@ jobs:
           indices=$(python3 -ESs -c 'import json,sys; n=int(sys.argv[1]); print(json.dumps(list(range(1, n+1))))' "$N")
           echo "indices=$indices" >> $GITHUB_OUTPUT
           echo "max_parallel=$P" >> $GITHUB_OUTPUT
-          echo "matrix size: $N, max_parallel: $P"
+          echo "任务矩阵：数量=$N，最大并发=$P"
 
   deps-cache:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v5
 
-      - name: Setup Python
+      - name: 配置 Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Cache wheelhouse
+      - name: 缓存 wheelhouse
         id: wheelhouse
         uses: actions/cache@v5
         with:
@@ -62,16 +62,16 @@ jobs:
           restore-keys: |
             wheelhouse-${{ runner.os }}-py312-
 
-      - name: Build wheelhouse
+      - name: 构建 wheelhouse
         if: steps.wheelhouse.outputs.cache-hit != 'true'
         run: |
           set -e
           python -m pip install --upgrade pip
           mkdir -p .wheelhouse
           pip download -r requirements.txt -d .wheelhouse
-          echo "wheel count: $(find .wheelhouse -type f -name '*.whl' | wc -l)"
+          echo "wheelhouse 数量：$(find .wheelhouse -type f -name '*.whl' | wc -l)"
 
-      - name: Cache virtualenv
+      - name: 缓存虚拟环境
         id: venv
         uses: actions/cache@v5
         with:
@@ -80,7 +80,7 @@ jobs:
           restore-keys: |
             venv-${{ runner.os }}-py312-
 
-      - name: Build virtualenv
+      - name: 构建虚拟环境
         if: steps.venv.outputs.cache-hit != 'true'
         run: |
           set -e
@@ -97,10 +97,10 @@ jobs:
           missing = [m for m in mods if importlib.util.find_spec(m) is None]
           if missing:
               raise SystemExit(f"missing modules: {missing}")
-          print("venv dependency check OK")
+          print("虚拟环境依赖检查通过")
           PY
 
-      - name: Cache CloakBrowser binary
+      - name: 缓存 CloakBrowser 程序
         id: cloak
         uses: actions/cache@v5
         with:
@@ -109,7 +109,7 @@ jobs:
           restore-keys: |
             cloakbrowser-${{ runner.os }}-
 
-      - name: Warm CloakBrowser binary
+      - name: 预热 CloakBrowser 程序
         if: steps.cloak.outputs.cache-hit != 'true'
         run: |
           set -e
@@ -126,15 +126,15 @@ jobs:
         index: ${{ fromJson(needs.prepare.outputs.indices) }}
 
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v5
 
-      - name: Setup Python
+      - name: 配置 Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Restore virtualenv
+      - name: 恢复虚拟环境
         id: venv
         uses: actions/cache@v5
         with:
@@ -143,7 +143,7 @@ jobs:
           restore-keys: |
             venv-${{ runner.os }}-py312-
 
-      - name: Restore wheelhouse fallback
+      - name: 恢复 wheelhouse 备用缓存
         if: steps.venv.outputs.cache-hit != 'true'
         id: wheelhouse
         uses: actions/cache@v5
@@ -153,7 +153,7 @@ jobs:
           restore-keys: |
             wheelhouse-${{ runner.os }}-py312-
 
-      - name: Restore CloakBrowser binary
+      - name: 恢复 CloakBrowser 程序
         id: cloak
         uses: actions/cache@v5
         with:
@@ -162,13 +162,13 @@ jobs:
           restore-keys: |
             cloakbrowser-${{ runner.os }}-
 
-      - name: Activate/install dependencies
+      - name: 激活并安装依赖
         env:
           VENV_CACHE_HIT: ${{ steps.venv.outputs.cache-hit }}
         run: |
           set -e
           if [ "$VENV_CACHE_HIT" != "true" ] || [ ! -x .venv/bin/python ]; then
-            echo "venv exact cache miss; installing/updating from wheelhouse/pip"
+          echo "虚拟环境精确缓存未命中，正在从 wheelhouse 或 pip 安装/更新"
             python -m venv .venv
             .venv/bin/python -m pip install --upgrade pip
             if [ -n "$(find .wheelhouse -type f -name '*.whl' -print -quit 2>/dev/null)" ]; then
@@ -177,29 +177,29 @@ jobs:
               .venv/bin/pip install -r requirements.txt
             fi
           else
-            echo "venv exact cache hit; skip pip install"
+          echo "虚拟环境精确命中缓存；跳过 pip 安装"
           fi
           echo "$PWD/.venv/bin" >> $GITHUB_PATH
           .venv/bin/python -V
           if [ ! -d "$HOME/.cloakbrowser" ] || [ -z "$(find "$HOME/.cloakbrowser" -mindepth 1 -print -quit 2>/dev/null)" ]; then
-            echo "CloakBrowser cache miss; installing binary"
+            echo "CloakBrowser 缓存未命中；正在安装二进制文件"
             .venv/bin/python -m cloakbrowser install
           else
-            echo "CloakBrowser cache hit; skip install"
+            echo "CloakBrowser 缓存已命中；跳过安装"
           fi
 
-      - name: Mask CapMonster key
+      - name: 脱敏 CapMonster 密钥
         if: ${{ github.event.inputs.capmonster_key != '' }}
         run: echo "::add-mask::${{ github.event.inputs.capmonster_key }}"
 
-      - name: Run register
+      - name: 运行注册
         env:
           CAPMONSTER_API_KEY: ${{ github.event.inputs.capmonster_key }}
           PYTHONUNBUFFERED: "1"
           MATRIX_INDEX: "${{ matrix.index }}"
         run: python register.py
 
-      - name: Upload screenshots/debug data
+      - name: 上传截图和调试数据
         if: always()
         uses: actions/upload-artifact@v6
         with:
@@ -210,7 +210,7 @@ jobs:
             captcha_solve_debug/**
           if-no-files-found: ignore
 
-      - name: Upload account data
+      - name: 上传账号数据
         if: always()
         uses: actions/upload-artifact@v6
         with:
@@ -223,14 +223,14 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Download all account artifacts
+      - name: 下载全部账号构件
         uses: actions/download-artifact@v7
         with:
           pattern: reg-accounts-*
           path: all_accounts
           merge-multiple: false
 
-      - name: Merge account files
+      - name: 合并账号文件
         run: |
           > all_accounts.txt
           for f in all_accounts/*/registered_account.txt; do
@@ -238,7 +238,7 @@ jobs:
           done
           [ -s all_accounts.txt ] || echo "(no successful accounts)" > all_accounts.txt
 
-      - name: Upload merged account data
+      - name: 上传合并后的账号数据
         uses: actions/upload-artifact@v6
         with:
           name: all-registered-accounts

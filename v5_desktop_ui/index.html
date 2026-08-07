@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
-  <title>V5 Suite</title>
+  <title>V5 控制台</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -17,7 +17,7 @@
           <i data-lucide="panel-left"></i>
         </button>
         <div class="brand-mark" aria-hidden="true"><span></span><span></span></div>
-        <strong class="brand-name">V5 Suite</strong>
+        <strong class="brand-name">V5 控制台</strong>
       </div>
 
       <nav class="product-tabs" aria-label="产品页面">
@@ -46,7 +46,7 @@
         </button>
         <button class="profile-button" type="button" aria-label="打开用户菜单">
           <span class="avatar">QD</span>
-          <span class="profile-copy"><strong>Operator</strong><small>本地工作区</small></span>
+          <span class="profile-copy"><strong>操作员</strong><small>本地工作区</small></span>
           <i data-lucide="chevron-down"></i>
         </button>
       </div>
@@ -56,7 +56,7 @@
       <aside class="side-rail" id="side-rail" aria-label="注册中心导航">
         <div class="rail-heading">
           <span class="rail-product-icon"><i data-lucide="user-round-plus"></i></span>
-          <span class="rail-heading-copy"><strong id="rail-title">注册中心</strong><small id="rail-subtitle">Registration</small></span>
+          <span class="rail-heading-copy"><strong id="rail-title">注册中心</strong><small id="rail-subtitle">注册任务</small></span>
           <button class="icon-button rail-close" type="button" data-action="close-rail" aria-label="收起导航" title="收起导航"><i data-lucide="chevron-left"></i></button>
         </div>
 
@@ -117,7 +117,7 @@
                     </button>
                     <button class="preset-card" type="button" data-preset="local-v11" role="listitem">
                       <span class="preset-icon violet"><i data-lucide="brain-circuit"></i></span>
-                      <span class="preset-copy"><strong>本地 V11 快速</strong><small>V11 Fast · RuyiPage</small><em>直连 · GBR · 并发 20</em></span>
+                      <span class="preset-copy"><strong>本地 V11 快速</strong><small>V11 快速模式 · RuyiPage</small><em>直连 · GBR · 并发 20</em></span>
                       <i class="preset-check" data-lucide="circle-check"></i>
                     </button>
                     <button class="preset-card" type="button" data-preset="cloak" role="listitem">
@@ -205,8 +205,8 @@
                 <div class="detail-tabs" role="tablist"><button class="is-active" type="button" role="tab">活动</button><button type="button" role="tab">结果</button><button type="button" role="tab">错误</button></div>
                 <ol class="timeline" id="detail-timeline">
                   <li><i class="success"></i><span><time>20:48:45</time><strong>注册成功</strong><small>账号结果已写入批次输出</small></span></li>
-                  <li><i></i><span><time>20:48:27</time><strong>求解完成</strong><small>Arkose token 已返回</small></span></li>
-                  <li><i></i><span><time>20:48:12</time><strong>任务启动</strong><small>Worker #12 获取任务</small></span></li>
+                  <li><i></i><span><time>20:48:27</time><strong>求解完成</strong><small>Arkose 令牌已返回</small></span></li>
+                  <li><i></i><span><time>20:48:12</time><strong>任务启动</strong><small>工作进程 #12 获取任务</small></span></li>
                 </ol>
               </aside>
             </div>
@@ -218,14 +218,14 @@
               <div class="configuration-main">
                 <section class="form-panel"><div class="form-heading"><span>01</span><div><h2>任务规模</h2><p>批次、并发和注册地区</p></div></div><div class="form-grid three">
                   <label class="field"><span>注册数量</span><div class="stepper"><button type="button" data-step-target="count" data-direction="down"><i data-lucide="minus"></i></button><input id="count" type="number" min="1" max="256" value="10"><button type="button" data-step-target="count" data-direction="up"><i data-lucide="plus"></i></button></div><small>范围 1–256</small></label>
-                  <label class="field"><span>最大并发</span><div class="stepper"><button type="button" data-step-target="parallel" data-direction="down"><i data-lucide="minus"></i></button><input id="parallel" type="number" min="1" max="20" value="10"><button type="button" data-step-target="parallel" data-direction="up"><i data-lucide="plus"></i></button></div><small>最多 20 个 Worker</small></label>
+                  <label class="field"><span>最大并发</span><div class="stepper"><button type="button" data-step-target="parallel" data-direction="down"><i data-lucide="minus"></i></button><input id="parallel" type="number" min="1" max="20" value="10"><button type="button" data-step-target="parallel" data-direction="up"><i data-lucide="plus"></i></button></div><small>最多 20 个工作进程</small></label>
                   <label class="field"><span>国家代码</span><div class="input-icon"><i data-lucide="globe-2"></i><input id="country" type="text" maxlength="3" value="USA"></div><small>ISO 三字母代码</small></label>
                 </div></section>
                 <section class="form-panel"><div class="form-heading"><span>02</span><div><h2>验证码求解</h2><p>服务、浏览器和运行参数</p></div></div><div class="choice-grid" data-choice-group="solver">
-                  <button type="button" data-value="v11"><i data-lucide="brain-circuit"></i><span><strong>本地 V11</strong><small>GPU Fast 模式</small></span></button>
+                  <button type="button" data-value="v11"><i data-lucide="brain-circuit"></i><span><strong>本地 V11</strong><small>GPU 快速模式</small></span></button>
                   <button type="button" data-value="yescaptcha"><i data-lucide="scan-search"></i><span><strong>YesCaptcha</strong><small>远程分类 API</small></span></button>
-                  <button class="is-selected" type="button" data-value="capmonster"><i data-lucide="headphones"></i><span><strong>CapMonster</strong><small>远程 Token 求解</small></span></button>
-                </div><div class="conditional-row" id="provider-fields"><label class="field"><span>API 密钥</span><div class="input-icon"><i data-lucide="key-round"></i><input type="password" value="sample-key-value"></div></label><label class="toggle-field"><span><strong>传递注册代理</strong><small>关闭后使用 Proxyless</small></span><input type="checkbox" checked><i></i></label></div><div class="conditional-row" id="browser-field" hidden><label class="field"><span>求解浏览器</span><select><option>RuyiPage</option><option>CloakBrowser</option></select></label></div></section>
+                  <button class="is-selected" type="button" data-value="capmonster"><i data-lucide="headphones"></i><span><strong>CapMonster</strong><small>远程令牌求解</small></span></button>
+                </div><div class="conditional-row" id="provider-fields"><label class="field"><span>API 密钥</span><div class="input-icon"><i data-lucide="key-round"></i><input type="password" value="sample-key-value"></div></label><label class="toggle-field"><span><strong>传递注册代理</strong><small>关闭后使用无代理模式</small></span><input type="checkbox" checked><i></i></label></div><div class="conditional-row" id="browser-field" hidden><label class="field"><span>求解浏览器</span><select><option>RuyiPage</option><option>CloakBrowser</option></select></label></div></section>
                 <section class="form-panel"><div class="form-heading"><span>03</span><div><h2>网络与分流</h2><p>身份请求与公共资源出口</p></div></div><div class="choice-grid two" data-choice-group="network"><button type="button" data-value="direct"><i data-lucide="wifi"></i><span><strong>直连</strong><small>使用 Runner 出口</small></span></button><button class="is-selected" type="button" data-value="proxy"><i data-lucide="shield-check"></i><span><strong>代理</strong><small>每个 Job 独立分配</small></span></button></div><label class="file-row" id="proxy-row"><span><i data-lucide="file-input"></i><span><strong>IP.txt</strong><small>1,000 条代理 · 格式有效</small></span></span><button class="button tertiary" type="button">重新选择</button></label></section>
               </div>
               <aside class="task-summary"><span class="section-kicker">任务摘要</span><div class="summary-state"><div><h2>准备就绪</h2><p>所有必需配置均已填写</p></div><span class="status-dot"></span></div><dl><div><dt>注册数量</dt><dd id="summary-count">10</dd></div><div><dt>最大并发</dt><dd id="summary-parallel">10</dd></div><div><dt>注册国家</dt><dd id="summary-country">USA</dd></div><div><dt>求解方式</dt><dd id="summary-solver">CapMonster</dd></div><div><dt>注册网络</dt><dd id="summary-network">代理</dd></div></dl><div class="estimate"><span>预计运行</span><strong>约 4–6 分钟</strong><small>按当前配置估算</small></div><button class="button primary wide" type="button" data-action="review-run"><i data-lucide="play"></i>启动任务</button></aside>
@@ -244,12 +244,12 @@
 
           <section class="registration-view" data-view-panel="results" hidden>
             <div class="page-heading"><div><span class="section-kicker">成功账号</span><h1>结果中心</h1><p>筛选、复制和导出批次结果。</p></div><button class="button primary" type="button"><i data-lucide="download"></i>导出结果</button></div>
-            <section class="panel simple-panel"><div class="view-toolbar"><label class="compact-search wide"><i data-lucide="search"></i><input type="search" placeholder="搜索账号或 BattleTag"></label><select><option>#30263221670</option><option>#30252060886</option></select></div><div class="table-scroll"><table class="generic-table"><thead><tr><th>账号</th><th>BattleTag</th><th>Player Account ID</th><th>国家</th><th>邮箱状态</th><th>完成时间</th></tr></thead><tbody><tr><td><strong>t••••••••@outlook.com</strong></td><td>Amireux64</td><td class="mono">991440161</td><td>USA</td><td><span class="status-badge success">已验证</span></td><td>20:47:38</td></tr><tr><td><strong>j••••••••@outlook.com</strong></td><td>Amireux20</td><td class="mono">991440208</td><td>USA</td><td><span class="status-badge success">已验证</span></td><td>20:46:52</td></tr><tr><td><strong>a••••••••@outlook.com</strong></td><td>Amireux11</td><td class="mono">991440245</td><td>USA</td><td><span class="status-badge warning">待确认</span></td><td>20:45:19</td></tr></tbody></table></div></section>
+            <section class="panel simple-panel"><div class="view-toolbar"><label class="compact-search wide"><i data-lucide="search"></i><input type="search" placeholder="搜索账号或 BattleTag"></label><select><option>#30263221670</option><option>#30252060886</option></select></div><div class="table-scroll"><table class="generic-table"><thead><tr><th>账号</th><th>BattleTag</th><th>玩家账号 ID</th><th>国家</th><th>邮箱状态</th><th>完成时间</th></tr></thead><tbody><tr><td><strong>t••••••••@outlook.com</strong></td><td>Amireux64</td><td class="mono">991440161</td><td>USA</td><td><span class="status-badge success">已验证</span></td><td>20:47:38</td></tr><tr><td><strong>j••••••••@outlook.com</strong></td><td>Amireux20</td><td class="mono">991440208</td><td>USA</td><td><span class="status-badge success">已验证</span></td><td>20:46:52</td></tr><tr><td><strong>a••••••••@outlook.com</strong></td><td>Amireux11</td><td class="mono">991440245</td><td>USA</td><td><span class="status-badge warning">待确认</span></td><td>20:45:19</td></tr></tbody></table></div></section>
           </section>
 
           <section class="registration-view logs-view" data-view-panel="logs" hidden>
-            <div class="page-heading"><div><span class="section-kicker">运行输出</span><h1>实时日志</h1><p>按批次和 Worker 检索运行事件。</p></div><div class="page-actions"><button class="button secondary" type="button" data-action="clear-logs"><i data-lucide="trash-2"></i>清空</button><button class="button secondary" type="button"><i data-lucide="download"></i>保存</button></div></div>
-            <div class="log-shell"><div class="log-toolbar"><select><option>#30263221670</option></select><select><option>全部 Worker</option><option>Worker #07</option></select><label class="compact-search dark"><i data-lucide="search"></i><input type="search" placeholder="筛选日志内容"></label><span><i class="status-dot"></i>接收中</span></div><div class="log-console" id="log-console"><div><time>20:48:11.767</time><b>W12</b><em>INFO</em><p>持久 HTTP 流程已到达 captcha-gate</p></div><div><time>20:48:12.094</time><b>W12</b><em>INFO</em><p>Arkose 上下文已捕获 · blobLength=713</p></div><div><time>20:48:13.118</time><b>W07</b><em class="route">ROUTE</em><p>account.battle.net → upstream-proxy</p></div><div><time>20:48:27.983</time><b>W12</b><em class="done">DONE</em><p>求解器已返回 Arkose token · length=398</p></div><div><time>20:48:45.076</time><b>W12</b><em class="done">DONE</em><p>已通过持久 HTTP 会话完成注册</p></div><div><time>20:48:48.243</time><b>SYS</b><em class="route">METER</em><p>proxy=0.4268 MiB · direct=0.9831 MiB</p></div></div></div>
+            <div class="page-heading"><div><span class="section-kicker">运行输出</span><h1>实时日志</h1><p>按批次和工作进程检索运行事件。</p></div><div class="page-actions"><button class="button secondary" type="button" data-action="clear-logs"><i data-lucide="trash-2"></i>清空</button><button class="button secondary" type="button"><i data-lucide="download"></i>保存</button></div></div>
+            <div class="log-shell"><div class="log-toolbar"><select><option>#30263221670</option></select><select><option>全部工作进程</option><option>工作进程 #07</option></select><label class="compact-search dark"><i data-lucide="search"></i><input type="search" placeholder="筛选日志内容"></label><span><i class="status-dot"></i>接收中</span></div><div class="log-console" id="log-console"><div><time>20:48:11.767</time><b>W12</b><em>信息</em><p>持久 HTTP 流程已到达 captcha-gate</p></div><div><time>20:48:12.094</time><b>W12</b><em>信息</em><p>Arkose 上下文已捕获 · blob 长度=713</p></div><div><time>20:48:13.118</time><b>W07</b><em class="route">路由</em><p>account.battle.net → 上游代理</p></div><div><time>20:48:27.983</time><b>W12</b><em class="done">完成</em><p>求解器已返回 Arkose 令牌 · 长度=398</p></div><div><time>20:48:45.076</time><b>W12</b><em class="done">完成</em><p>已通过持久 HTTP 会话完成注册</p></div><div><time>20:48:48.243</time><b>系统</b><em class="route">计量</em><p>代理=0.4268 MiB · 直连=0.9831 MiB</p></div></div></div>
           </section>
 
           <section class="registration-view" data-view-panel="settings" hidden>
@@ -259,11 +259,11 @@
         </section>
 
         <section class="product-panel reserved-product" data-product-panel="ban-lookup" hidden>
-          <div class="empty-state"><span><i data-lucide="shield-search"></i></span><small>V5 Suite</small><h1>封禁查询</h1><p>页面框架已预留，后续将在这里接入账号绑定与封禁状态查询。</p><em>功能尚未接入</em></div>
+          <div class="empty-state"><span><i data-lucide="shield-search"></i></span><small>V5 控制台</small><h1>封禁查询</h1><p>页面框架已预留，后续将在这里接入账号绑定与封禁状态查询。</p><em>功能尚未接入</em></div>
         </section>
 
         <section class="product-panel reserved-product" data-product-panel="phone-binding" hidden>
-          <div class="empty-state"><span><i data-lucide="smartphone"></i></span><small>V5 Suite</small><h1>绑定手机</h1><p>页面框架已预留，后续将在这里接入手机号绑定任务与状态管理。</p><em>功能尚未接入</em></div>
+          <div class="empty-state"><span><i data-lucide="smartphone"></i></span><small>V5 控制台</small><h1>绑定手机</h1><p>页面框架已预留，后续将在这里接入手机号绑定任务与状态管理。</p><em>功能尚未接入</em></div>
         </section>
       </main>
     </div>

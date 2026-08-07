@@ -265,26 +265,26 @@ def request_verification_email_via_browser(page: Any) -> dict[str, Any]:
         result = page.run_js(EMAIL_RESEND_API_JS, timeout=20)
     except Exception as exc:
         LOG.warning(
-            "V6 browser email resend request failed before receiving a response: %s",
+            "V6 浏览器重新发送邮件请求在收到响应前失败：%s",
             type(exc).__name__,
         )
         return {"ok": False, "status": 0, "error": type(exc).__name__}
     if not isinstance(result, dict):
         LOG.warning(
-            "V6 browser email resend request returned an unexpected result: %s",
+            "V6 浏览器重新发送邮件请求返回了意外结果：%s",
             type(result).__name__,
         )
         return {"ok": False, "status": 0, "error": "unexpected-result"}
     normalized = dict(result)
     if normalized.get("ok"):
         LOG.info(
-            "V6 browser email resend request accepted: HTTP %s",
+            "V6 浏览器重新发送邮件请求已被接受：HTTP %s",
             normalized.get("status"),
         )
     else:
         LOG.warning(
-            "V6 browser email resend request was not accepted: HTTP %s error=%s; "
-            "continuing with the DOM resend control",
+            "V6 浏览器重新发送邮件请求未被接受：HTTP %s，错误=%s；"
+            "继续使用页面重新发送控件",
             normalized.get("status"),
             normalized.get("error") or "unknown",
         )
@@ -354,7 +354,7 @@ def request_verification_email(
     # before the first Graph read.
     if not clicked_by_dom:
         _click_element(resend)
-    LOG.info("已点击 Battle.net 重新发送验证邮件链接: selector=%s", used_selector)
+    LOG.info("已点击 Battle.net 重新发送验证邮件链接：选择器=%s", used_selector)
     time.sleep(10.0)
     LOG.info("浏览器请求和页面点击完成后已等待 10 秒，开始读取验证邮件")
     return requested_at
@@ -399,7 +399,7 @@ def poll_verification_link_attempts(
             scanned_total = max(scanned_total, scanned)
             matching_total = max(matching_total, matching)
             LOG.info(
-                "第 %s/%s 次读取验证邮件: scanned=%s matching=%s found=%s",
+                "第 %s/%s 次读取验证邮件：已扫描=%s，匹配=%s，已找到=%s",
                 attempt,
                 total_attempts,
                 scanned,
@@ -457,13 +457,13 @@ def open_verification_link(page: Any, link: str, timeout: float) -> bool:
         state = wait_overview_email_verified(overview_tab, timeout=timeout)
         if state.get("verified"):
             LOG.info(
-                "账号概览页确认 Email Verified: source=%s checkIcon=%s",
+                "账号概览页确认邮箱已验证：来源=%s，勾选图标=%s",
                 state.get("source") or "unknown",
                 bool(state.get("checkIcon")),
             )
             return True
         LOG.warning(
-            "账号概览页未确认 Email Verified: cardFound=%s text=%r",
+            "账号概览页未确认邮箱已验证：找到卡片=%s，文本=%r",
             bool(state.get("cardFound")),
             str(state.get("text") or "")[:240],
         )
@@ -625,7 +625,7 @@ def fill_email_security_code(page: Any, code: str) -> None:
         page.actions.type(normalized, interval=120).perform()
         return
     except Exception as exc:
-        LOG.warning("原生 BiDi 键盘填写安全码失败，回退 DOM 逐框填写: %s", exc)
+        LOG.warning("原生 BiDi 键盘填写安全码失败，回退 DOM 逐框填写：%s", exc)
 
     script = r"""function(selector, character) {
       const wrapper = document.querySelector(selector);
@@ -664,7 +664,7 @@ def fill_email_security_code(page: Any, code: str) -> None:
     for selector, character in zip(EMAIL_CODE_BOX_SELECTORS, normalized):
         result = page.run_js(script, selector, character, timeout=10)
         if not isinstance(result, dict) or not result.get("ok"):
-            raise RuntimeError(f"填写邮箱安全码失败: {result}")
+            raise RuntimeError(f"填写邮箱安全码失败：{result}")
         time.sleep(0.15)
 
 
@@ -680,7 +680,7 @@ def complete_email_security_challenge(
         return False, 0, 0
     requested_at = datetime.now(timezone.utc) - timedelta(seconds=30)
     if stage == "choice":
-        LOG.info("检测到 Battle.net 邮箱安全验证方式选择页，自动提交 E-Mail")
+        LOG.info("检测到 Battle.net 邮箱安全验证方式选择页，自动提交电子邮箱验证")
         submit = page.ele("#submit", timeout=15)
         try:
             submit.click()
@@ -698,7 +698,7 @@ def complete_email_security_challenge(
         timeout=timeout,
     )
     LOG.info(
-        "已获取 Battle.net 六位邮箱安全码: scanned=%s matching=%s",
+        "已获取 Battle.net 六位邮箱安全码：已扫描=%s，匹配=%s",
         scanned,
         matching,
     )
@@ -731,7 +731,7 @@ def verify_registered_email(
     scanned = 0
     matching = 0
     try:
-        LOG.info("启动 V6 RuyiPage 执行注册邮箱状态确认: %s", credential.email)
+        LOG.info("启动 V6 RuyiPage 执行注册邮箱状态确认：%s", credential.email)
         page, cache_dir = launch_cached_ruyi_browser(
             args,
             proxy,
@@ -761,7 +761,7 @@ def verify_registered_email(
 
         state = wait_email_verified(page, timeout=12.0)
         if state.get("verified"):
-            LOG.info("Battle.net 账号页面已确认 Email Verified: %s", credential.email)
+            LOG.info("Battle.net 账号页面已确认邮箱已验证：%s", credential.email)
             return EmailVerificationResult(
                 True,
                 "already_verified",
@@ -774,7 +774,7 @@ def verify_registered_email(
             requested_at = request_verification_email(page)
         except Exception as exc:
             LOG.warning(
-                "Battle.net 验证邮件发送触发失败: %s",
+                "Battle.net 验证邮件发送触发失败：%s",
                 type(exc).__name__,
             )
             return EmailVerificationResult(
@@ -785,7 +785,7 @@ def verify_registered_email(
                 matching,
             )
         if requested_at is None:
-            LOG.info("进入邮箱详情页后账号已显示 Email Verified: %s", credential.email)
+            LOG.info("进入邮箱详情页后账号已显示邮箱已验证：%s", credential.email)
             return EmailVerificationResult(
                 True,
                 "already_verified",
@@ -822,7 +822,7 @@ def verify_registered_email(
                     )
             except Exception as exc:
                 LOG.warning(
-                    "第二次触发 Battle.net 验证邮件失败，继续等待第一次请求: %s",
+                    "第二次触发 Battle.net 验证邮件失败，继续等待第一次请求：%s",
                     type(exc).__name__,
                 )
             remaining_timeout = max(1.0, mail_deadline - time.monotonic())
@@ -852,7 +852,7 @@ def verify_registered_email(
             )
 
         LOG.info(
-            "已提取最新 Battle.net 验证链接: scanned=%s matching=%s",
+            "已提取最新 Battle.net 验证链接：已扫描=%s，匹配=%s",
             scanned,
             matching,
         )
@@ -870,7 +870,7 @@ def verify_registered_email(
             )
         return EmailVerificationResult(True, "verified", "", scanned, matching)
     except Exception as exc:
-        LOG.warning("V6 注册邮箱自动验证失败: %s", type(exc).__name__)
+        LOG.warning("V6 注册邮箱自动验证失败：%s", type(exc).__name__)
         return EmailVerificationResult(
             False,
             "verification_error",

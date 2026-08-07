@@ -33,13 +33,13 @@ def install_ruyi_tracking_filter(page: Any, logger: logging.Logger) -> bool:
     try:
         page.intercept.start_requests(handler)
         logger.info(
-            "V5 tracking filter enabled: %s",
+            "V5 追踪资源过滤器已启用：%s",
             ", ".join(BLOCKED_TRACKING_HOSTS),
         )
         return True
     except Exception as exc:
         logger.warning(
-            "V5 tracking filter unavailable: %s: %s",
+            "V5 追踪资源过滤器不可用：%s：%s",
             type(exc).__name__,
             exc,
         )

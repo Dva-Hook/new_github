@@ -43,7 +43,7 @@ class CDPImageCatcher:
             try:
                 self.ws.send(json.dumps(payload))
             except Exception as e:
-                logger.debug("CDP send failed: %s", e)
+                logger.debug("CDP 发送失败：%s", e)
             return mid
 
     def _get_browser_ws_url(self) -> str:
@@ -62,7 +62,7 @@ class CDPImageCatcher:
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
-        logger.info("[%s] CDP image catcher started", self._label)
+        logger.info("[%s] CDP 图片捕获器已启动", self._label)
 
     def _loop(self):
         while self._running:
@@ -89,7 +89,7 @@ class CDPImageCatcher:
                         rec["bytes"] = len(data)
                         rec["sha256"] = hashlib.sha256(data).hexdigest()
                         self.image_event.set()
-                        logger.info("[%s] captured image body idx=%s bytes=%s sha256=%s", self._label, idx, len(data), rec["sha256"][:12])
+                        logger.info("[%s] 已捕获图片正文，序号=%s 字节数=%s sha256=%s", self._label, idx, len(data), rec["sha256"][:12])
                     continue
 
                 method = msg.get("method")
@@ -133,7 +133,7 @@ class CDPImageCatcher:
                             "timestamp": time.time(),
                             "body_bytes": None,
                         })
-                        logger.info("[%s] saw image idx=%s status=%s mime=%s url=%s", self._label, idx, resp.get("status", 0), mime, url[:160])
+                        logger.info("[%s] 发现图片，序号=%s 状态=%s MIME=%s URL=%s", self._label, idx, resp.get("status", 0), mime, url[:160])
                     continue
                 if method == "Network.loadingFinished":
                     rid = params.get("requestId")
@@ -263,34 +263,34 @@ def save_cdp_images(catcher: CDPImageCatcher, out_dir: str, prefix: str = "captc
 
 def collect_captcha_images(page, catcher: CDPImageCatcher, out_dir: str = "captcha_images", max_submits: int = 12) -> dict:
     Path(out_dir).mkdir(parents=True, exist_ok=True)
-    logger.info("waiting/clicking Arkose Verify button")
+    logger.info("等待并点击 Arkose 验证按钮")
     deadline = time.time() + 45
     clicked_verify = False
     while time.time() < deadline:
         if click_verify_button(page):
             clicked_verify = True
-            logger.info("clicked Arkose Verify")
+            logger.info("已点击 Arkose 验证按钮")
             break
         time.sleep(1)
 
     catcher.wait_for_image(min_count=1, timeout=30)
     saved = save_cdp_images(catcher, out_dir)
-    logger.info("initial captured images=%s saved=%s", len(catcher.captured_images), len(saved))
+    logger.info("初始已捕获图片数=%s 已保存=%s", len(catcher.captured_images), len(saved))
 
     submit_count = 0
     last_ready = len([r for r in catcher.captured_images if r.get("body_bytes")])
     for n in range(max_submits):
         if not click_submit_button(page):
-            logger.info("submit button not found at loop=%s", n)
+            logger.info("第 %s 轮未找到提交按钮", n)
             break
         submit_count += 1
-        logger.info("random submit clicked %s/%s", submit_count, max_submits)
+        logger.info("随机提交点击 %s/%s", submit_count, max_submits)
         time.sleep(0.8 + random.random() * 0.9)
         catcher.wait_for_image(min_count=last_ready + 1, timeout=12)
         ready = len([r for r in catcher.captured_images if r.get("body_bytes")])
         save_cdp_images(catcher, out_dir)
         if ready <= last_ready:
-            logger.info("no new image after submit=%s, stopping", submit_count)
+            logger.info("提交次数=%s 后没有新图片，停止捕获", submit_count)
             break
         last_ready = ready
 
@@ -314,5 +314,5 @@ def zip_capture_dir(src_dir: str = "captcha_images", zip_path: str = "captcha_im
             for path in src.rglob("*"):
                 if path.is_file():
                     zf.write(path, path.relative_to(src.parent))
-    logger.info("zip saved: %s", zip_path)
+    logger.info("ZIP 已保存：%s", zip_path)
     return zip_path

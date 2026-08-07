@@ -169,7 +169,7 @@ def parse_flow_form(
     soup = BeautifulSoup(str(html or ""), "html.parser")
     forms = list(soup.find_all("form"))
     if not forms:
-        raise ValueError("response does not contain a form")
+        raise ValueError("响应中不包含表单")
     form = max(forms, key=lambda item: _form_score(item, preferred_control))
     controls: list[FormControl] = []
     for element in form.find_all(["input", "select", "textarea"]):
@@ -290,7 +290,7 @@ def build_step_fields(
         return _without_names(hidden, {name}) + [(name, value)]
     if step == "row-redirect-to-tassadar":
         return list(hidden)
-    raise ValueError(f"unsupported flow step: {step}")
+    raise ValueError(f"不支持的流程步骤：{step}")
 
 
 def build_country_probe_fields(form: FormSnapshot, country: str) -> list[tuple[str, str]]:
@@ -380,7 +380,7 @@ def validate_transition(current_step: str, next_step: str, *, country_probe: boo
     expected = NEXT_STEP.get(current_step)
     if expected != next_step:
         raise RuntimeError(
-            f"flow transition rejected after {current_step}: expected {expected or 'completion'}, got {next_step}"
+            f"流程在 {current_step} 后拒绝转换：预期 {expected or '完成'}，实际 {next_step}"
         )
 
 
@@ -614,7 +614,7 @@ class PersistentFlowState:
         target = Path(path)
         data = json.loads(target.read_text(encoding="utf-8"))
         if int(data.get("schemaVersion") or 0) != 1:
-            raise ValueError(f"unsupported state schema: {data.get('schemaVersion')!r}")
+            raise ValueError(f"不支持的状态架构：{data.get('schemaVersion')!r}")
         return cls(target, data)
 
     def save(self) -> None:
@@ -765,7 +765,7 @@ class BattleProtocolClient:
         response = self._request("GET", self.entry_url)
         meta = self._save_response("bootstrap_get", response)
         if not 200 <= int(response.status_code) < 400:
-            raise RuntimeError(f"bootstrap GET failed: HTTP {response.status_code}")
+            raise RuntimeError(f"引导 GET 请求失败：HTTP {response.status_code}")
         form = parse_flow_form(response.text, str(response.url))
         if form.step == "login":
             fields = build_step_fields(form, "login", self.state.data["identity"])
@@ -777,7 +777,7 @@ class BattleProtocolClient:
             )
             meta = self._save_response("login_submit", response)
             if not 200 <= int(response.status_code) < 400:
-                raise RuntimeError(f"login/account-name submit failed: HTTP {response.status_code}")
+                raise RuntimeError(f"登录/账号名提交失败：HTTP {response.status_code}")
             form = parse_flow_form(response.text, str(response.url))
         if form.step not in {"initial-tou-agreement", "get-started"}:
             outcome = classify_registration_response(
@@ -785,7 +785,7 @@ class BattleProtocolClient:
                 self.state.data["identity"].get("email", ""),
             )
             raise RuntimeError(
-                f"bootstrap ended on unexpected form {form.step!r}: {outcome.get('sample') or 'no diagnostic text'}"
+                f"引导流程结束在意外表单 {form.step!r}：{outcome.get('sample') or '没有诊断文本'}"
             )
         self._checkpoint_response(
             form.step,
@@ -833,7 +833,7 @@ class BattleProtocolClient:
                 error=f"HTTP {response.status_code}",
                 event={"failed": current_step, "httpStatus": int(response.status_code)},
             )
-            raise RuntimeError(f"{current_step} failed: HTTP {response.status_code}")
+            raise RuntimeError(f"{current_step} 失败：HTTP {response.status_code}")
         try:
             next_form = parse_flow_form(
                 response.text,
@@ -857,7 +857,7 @@ class BattleProtocolClient:
                 event={"failed": current_step, "reason": "missing-next-form"},
             )
             raise RuntimeError(
-                f"{current_step} response has no next form: {outcome.get('sample') or exc}"
+                f"{current_step} 响应中没有下一步表单：{outcome.get('sample') or exc}"
             ) from exc
         try:
             validate_transition(current_step, next_form.step, country_probe=country_probe)
@@ -893,7 +893,7 @@ class BattleProtocolClient:
     def submit_country_probe(self, country: str) -> FormSnapshot:
         form = self.form or self.bootstrap()
         if form.step != "get-started":
-            raise RuntimeError(f"country probe requires get-started, current={form.step}")
+            raise RuntimeError(f"国家探测要求当前为 get-started，实际={form.step}")
         response = self._fragment_request("PUT", form, build_country_probe_fields(form, country))
         result = self._accept_fragment("get-started", response, country_probe=True)
         self.state.data["countryProbed"] = True
@@ -903,7 +903,7 @@ class BattleProtocolClient:
     def submit_initial_country_probe(self, country: str) -> FormSnapshot:
         form = self.form or self.bootstrap()
         if form.step != "initial-tou-agreement":
-            raise RuntimeError(f"initial country probe requires initial-tou-agreement, current={form.step}")
+            raise RuntimeError(f"初始国家探测要求当前为 initial-tou-agreement，实际={form.step}")
         response = self._fragment_request(
             "PUT",
             form,
@@ -917,7 +917,7 @@ class BattleProtocolClient:
     def submit_initial_tou(self, country: str) -> FormSnapshot:
         form = self.form or self.bootstrap()
         if form.step != "initial-tou-agreement":
-            raise RuntimeError(f"initial agreement requires initial-tou-agreement, current={form.step}")
+            raise RuntimeError(f"初始协议提交要求当前为 initial-tou-agreement，实际={form.step}")
         response = self._fragment_request(
             "POST",
             form,
@@ -928,7 +928,7 @@ class BattleProtocolClient:
     def submit_login(self) -> FormSnapshot:
         form = self.form or self.bootstrap()
         if form.step != "login":
-            raise RuntimeError(f"login submit requires login, current={form.step}")
+            raise RuntimeError(f"登录提交要求当前为 login，实际={form.step}")
         fields = build_step_fields(form, "login", self.state.data["identity"])
         response = self._request(
             form.method or "POST",
@@ -938,7 +938,7 @@ class BattleProtocolClient:
         )
         meta = self._save_response("login_submit", response)
         if not 200 <= int(response.status_code) < 400:
-            raise RuntimeError(f"login/account-name submit failed: HTTP {response.status_code}")
+            raise RuntimeError(f"登录/账号名提交失败：HTTP {response.status_code}")
         next_form = parse_flow_form(response.text, str(response.url))
         validate_transition("login", next_form.step)
         self._checkpoint_response(
@@ -952,14 +952,14 @@ class BattleProtocolClient:
     def submit_passthrough(self, step: str) -> FormSnapshot:
         form = self.form or self.bootstrap()
         if form.step != step:
-            raise RuntimeError(f"passthrough submit requires {step}, current={form.step}")
+            raise RuntimeError(f"透传提交要求当前为 {step}，实际={form.step}")
         fields = build_step_fields(form, step, self.state.data["identity"])
         return self._accept_fragment(step, self._fragment_request("POST", form, fields))
 
     def submit_step(self, step: str, *, country: str, opt_in: bool = False) -> FormSnapshot:
         form = self.form or self.bootstrap()
         if form.step != step:
-            raise RuntimeError(f"refusing to replay {step}: current server form is {form.step}")
+            raise RuntimeError(f"拒绝重放 {step}：当前服务器表单为 {form.step}")
         fields = build_step_fields(
             form,
             step,
@@ -982,10 +982,10 @@ class BattleProtocolClient:
             transitions += 1
             if transitions > 32:
                 raise RuntimeError(
-                    f"registration flow exceeded transition limit at {form.step}"
+                    f"注册流程在 {form.step} 超过转换次数上限"
                 )
             if form.step not in FLOW_STEPS:
-                raise RuntimeError(f"unsupported current flow form: {form.step}")
+                raise RuntimeError(f"不支持的当前流程表单：{form.step}")
             if form.step == "login":
                 form = self.submit_login()
                 continue
@@ -1015,7 +1015,7 @@ class BattleProtocolClient:
         if form_html:
             current = parse_flow_form(form_html, form_url or self.entry_url)
         if current is not None and current.step != "captcha-gate":
-            raise RuntimeError(f"browser returned unexpected registration form: {current.step}")
+            raise RuntimeError(f"浏览器返回了意外的注册表单：{current.step}")
         self.state.checkpoint(
             "captcha-gate",
             form=current.to_dict() if current else self.state.data.get("form"),
@@ -1027,7 +1027,7 @@ class BattleProtocolClient:
     def submit_captcha(self, token: str) -> dict[str, Any]:
         form = self.form
         if form is None or form.step != "captcha-gate":
-            raise RuntimeError("captcha submission requires the persisted captcha-gate form")
+            raise RuntimeError("验证码提交需要持久化的 captcha-gate 表单")
         fields = build_step_fields(
             form,
             "captcha-gate",

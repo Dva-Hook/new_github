@@ -84,7 +84,7 @@ def sanitize_cached_profile(
         and cache_dir != DEFAULT_EMAIL_BROWSER_CACHE_DIR.resolve()
     ):
         raise RuntimeError(
-            f"自定义邮箱验证缓存目录已有文件且不是 V5 管理的 profile: {cache_dir}"
+            f"自定义邮箱验证缓存目录已有文件且不是 V5 管理的配置目录：{cache_dir}"
         )
     if not marker.is_file():
         marker.write_text(
@@ -100,7 +100,7 @@ def sanitize_cached_profile(
         except PermissionError as exc:
             if time.monotonic() >= lock_deadline:
                 raise RuntimeError(
-                    f"邮箱验证缓存 profile 仍被浏览器占用: {cache_dir}"
+                    f"邮箱验证缓存配置目录仍被浏览器占用：{cache_dir}"
                 ) from exc
             time.sleep(max(0.0, float(poll_interval)))
 
@@ -146,7 +146,7 @@ def sanitize_cached_profile(
             except PermissionError as exc:
                 if time.monotonic() >= removal_deadline:
                     raise RuntimeError(
-                        f"邮箱验证缓存 profile 的身份状态仍被浏览器占用: {path}"
+                        f"邮箱验证缓存配置目录的身份状态仍被浏览器占用：{path}"
                     ) from exc
                 time.sleep(max(0.0, float(poll_interval)))
         if existed:
@@ -177,12 +177,12 @@ def configure_email_browser_english(page: Any) -> dict[str, Any]:
     ]
     if not language.lower().startswith("en"):
         raise RuntimeError(
-            f"RuyiPage 英文 locale 校验失败: language={language!r} "
-            f"languages={languages!r}"
+            f"RuyiPage 英文区域设置校验失败：当前语言={language!r}，"
+            f"语言列表={languages!r}"
         )
 
     LOG.info(
-        "邮箱验证浏览器语言已固定为英文: language=%s languages=%s",
+        "邮箱验证浏览器语言已固定为英文：当前语言=%s，语言列表=%s",
         language,
         languages,
     )
@@ -210,7 +210,7 @@ def launch_cached_ruyi_browser(
     ).expanduser().resolve()
     removed = sanitize_cached_profile(cache_dir)
     LOG.info(
-        "邮箱验证浏览器 profile 已就绪: cache=%s sanitizedEntries=%d cache2=%s",
+        "邮箱验证浏览器配置目录已就绪：缓存=%s，已清理项目=%d，二级缓存=%s",
         cache_dir,
         len(removed),
         (cache_dir / "cache2").exists(),
@@ -257,7 +257,7 @@ def close_cached_ruyi_browser(page: Any, cache_dir: Path) -> None:
     finally:
         removed = sanitize_cached_profile(cache_dir)
         LOG.info(
-            "邮箱验证浏览器已关闭并清理身份状态: removed=%d cache2=%s",
+            "邮箱验证浏览器已关闭并清理身份状态：已删除=%d，二级缓存=%s",
             len(removed),
             (cache_dir / "cache2").exists(),
         )
@@ -460,7 +460,7 @@ def wait_element(page: Any, selector: str, timeout: float) -> Any:
                 if element:
                     return element
         time.sleep(0.25)
-    raise TimeoutError(f"等待元素超时: {selector}")
+        raise TimeoutError(f"等待元素超时：{selector}")
 
 
 def click_element(page: Any, selector: str, timeout: float = 30.0) -> None:
@@ -518,7 +518,7 @@ def navigate_with_retry(
             last_detail = type(error).__name__
         if attempt < attempts:
             time.sleep(float(attempt))
-    raise RuntimeError(f"{description}连续导航失败: {last_detail}")
+    raise RuntimeError(f"{description}连续导航失败：{last_detail}")
 
 
 def delete_account_cookies(page: Any) -> None:
@@ -551,10 +551,10 @@ def clear_account_session_storage(
         if warn_on_failure and (
             not isinstance(result, dict) or not result.get("ok")
         ):
-            LOG.warning("%s Web Storage/IndexedDB 未完全清理: %s", description, result)
+            LOG.warning("%s Web Storage/IndexedDB 未完全清理：%s", description, result)
     except Exception as exc:
         if warn_on_failure:
-            LOG.warning("清理 %s Web Storage/IndexedDB 失败: %s", description, exc)
+            LOG.warning("清理 %s Web Storage/IndexedDB 失败：%s", description, exc)
 
 
 def prepare_clean_login_page(page: Any) -> None:
@@ -648,7 +648,7 @@ def login_battle_net(
     *,
     timeout: float,
 ) -> EmailVerificationResult:
-    LOG.info("打开 Battle.net 登录页: %s", email)
+    LOG.info("打开 Battle.net 登录页：%s", email)
     prepare_clean_login_page(page)
     close_cookie_banner(page)
     account_input = wait_element(page, "#accountName", min(30.0, timeout))
@@ -682,7 +682,7 @@ def login_battle_net(
         accept_password=False,
     )
     if phase == "success":
-        LOG.info("Battle.net 登录成功: %s", email)
+        LOG.info("Battle.net 登录成功：%s", email)
         return EmailVerificationResult(True, "logged_in")
     if phase in {"manual_email_code", "manual_security_check"}:
         return _manual_login_result(phase)
@@ -902,7 +902,7 @@ def verify_registered_email(
     page: Any = None
     cache_dir: Optional[Path] = None
     try:
-        LOG.info("启动 RuyiPage 执行注册邮箱验证: %s", credential.email)
+        LOG.info("启动 RuyiPage 执行注册邮箱验证：%s", credential.email)
         page, cache_dir = launch_cached_ruyi_browser(
             args,
             proxy,
@@ -931,7 +931,7 @@ def verify_registered_email(
                 matching,
             )
         LOG.info(
-            "已提取最新 Battle.net 验证链接，扫描邮件=%s 匹配发件人=%s",
+            "已提取最新 Battle.net 验证链接：扫描邮件=%s，匹配发件人=%s",
             scanned,
             matching,
         )
@@ -948,7 +948,7 @@ def verify_registered_email(
             )
         return EmailVerificationResult(True, "verified", "", scanned, matching)
     except Exception as exc:
-        LOG.warning("注册邮箱自动验证失败: %s", type(exc).__name__)
+        LOG.warning("注册邮箱自动验证失败：%s", type(exc).__name__)
         return EmailVerificationResult(
             False,
             "verification_error",

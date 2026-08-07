@@ -95,10 +95,10 @@ def screenshot(page, path: Path, full_page: bool = True) -> bool:
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         page.screenshot(path=str(path), full_page=full_page)
-        LOG.info("Screenshot saved: %s", path)
+        LOG.info("截图已保存：%s", path)
         return True
     except Exception as exc:
-        LOG.warning("screenshot failed %s: %s: %s", path.name, type(exc).__name__, exc)
+        LOG.warning("截图失败 %s：%s：%s", path.name, type(exc).__name__, exc)
         return False
 
 
@@ -115,7 +115,7 @@ def normalize_surl(value: Optional[str]) -> str:
 def origin_from_url(value: str) -> str:
     parsed = urlsplit(value)
     if not parsed.scheme or not parsed.netloc:
-        raise ValueError(f"invalid URL: {value!r}")
+        raise ValueError(f"无效 URL：{value!r}")
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
@@ -150,14 +150,14 @@ def wait_ele(page, selector: str, desc: str, timeout: float = 25.0):
 def wait_or_refresh(page, selector: str, desc: str, timeout: float = 25.0):
     try:
         ele = wait_ele(page, selector, desc, timeout=timeout)
-        LOG.info("Ready: %s", desc)
+        LOG.info("已就绪：%s", desc)
         return ele
     except Exception:
         LOG.warning("等待 %s 超时，刷新重试", desc)
         page.refresh()
         time.sleep(5)
         ele = wait_ele(page, selector, desc, timeout=timeout)
-        LOG.info("Ready after refresh: %s", desc)
+        LOG.info("刷新后已就绪：%s", desc)
         return ele
 
 
@@ -428,7 +428,7 @@ class RuyiArkoseCatcher:
         self._driver.set_callback("network.responseCompleted", self._on_response, context=None)
         self._driver.set_callback("network.fetchError", self._on_fetch_error, context=None)
         LOG.info(
-            "RuyiPage global BiDi capture started for /fc/gt2/ and /fc/ca/ (collector=%s)",
+            "RuyiPage 已启动全局 BiDi 捕获，监听 /fc/gt2/ 和 /fc/ca/（收集器=%s）",
             bool(self._collector_id),
         )
 
@@ -475,7 +475,7 @@ class RuyiArkoseCatcher:
         req = params.get("request", {}) or {}
         url = req.get("url", "") or ""
         if "/fc/gt2/" in url or "/fc/ca/" in url:
-            LOG.warning("RuyiPage network fetchError: %s", url[:180])
+            LOG.warning("RuyiPage 网络获取错误：%s", url[:180])
 
     def _get_collected_data(self, request_id: str, data_type: str) -> str:
         if not self._driver or not self._collector_id or not request_id:
@@ -517,7 +517,7 @@ class RuyiArkoseCatcher:
             blob = extract_blob_from_body(body)
             if blob and blob != self.captured_blob:
                 self.captured_blob = blob
-                LOG.info("RuyiPage captured blob: len=%s pk=%s", len(blob), self.captured_pk)
+                LOG.info("RuyiPage 已捕获 blob：长度=%s pk=%s", len(blob), self.captured_pk)
         elif "/fc/ca/" in url:
             fp = f"{request_id}:{len(body)}"
             if fp in self._handled:
@@ -529,7 +529,7 @@ class RuyiArkoseCatcher:
                 "status": (request or {}).get("status", 0),
             }
             self.ca_requests.append(rec)
-            LOG.info("RuyiPage captured /fc/ca/: count=%s status=%s", len(self.ca_requests), rec.get("status"))
+            LOG.info("RuyiPage 已捕获 /fc/ca/：数量=%s 状态=%s", len(self.ca_requests), rec.get("status"))
 
     def pump(self, timeout: float = 0.2) -> None:
         time.sleep(max(0.0, min(timeout, 0.5)))
@@ -541,7 +541,7 @@ class RuyiArkoseCatcher:
             blob = try_extract_blob_from_runtime(self.page)
             if blob and blob != self.captured_blob:
                 self.captured_blob = blob
-                LOG.info("RuyiPage runtime extracted blob: len=%s", len(blob))
+                LOG.info("RuyiPage 已从运行时提取 blob：长度=%s", len(blob))
 
     def wait_for_blob(self, timeout: float = 30.0) -> Optional[str]:
         deadline = time.time() + timeout
@@ -701,7 +701,7 @@ def click_arkose_verify(page, timeout: float = 25.0) -> bool:
             with contextlib.suppress(Exception):
                 result = ctx.run_js(js_click, timeout=2)
                 if isinstance(result, dict) and result.get("ok"):
-                    LOG.info("Clicked Arkose Verify by JS: %s", result)
+                    LOG.info("已通过 JS 点击 Arkose 验证按钮：%s", result)
                     return True
             for sel in selectors:
                 with contextlib.suppress(Exception):
@@ -730,7 +730,7 @@ def replace_document_under_origin(page, website_url: str, html: str) -> Dict[str
         page.stop_loading()
     actual = page.run_js("return {url: location.href, origin: location.origin};", timeout=10)
     if actual.get("origin") != expected_origin:
-        raise RuntimeError(f"origin mismatch: expected={expected_origin}, actual={actual}, nav_error={nav_error}")
+        raise RuntimeError(f"来源不一致：期望={expected_origin}，实际={actual}，导航错误={nav_error}")
     page.run_js(
         """function(html) {
           window.stop();
@@ -745,39 +745,39 @@ def replace_document_under_origin(page, website_url: str, html: str) -> Dict[str
 
 
 def drive_original_to_battletag(page, acc: Dict[str, str], out: Path) -> None:
-    LOG.info("Open URL: %s", REGISTER_URL)
+    LOG.info("打开 URL：%s", REGISTER_URL)
     page.get(REGISTER_URL, wait="interactive", timeout=60)
     time.sleep(2)
     close_cookie_banner_ruyi(page)
 
-    LOG.info("Step 1 email: %s", acc["email"])
+    LOG.info("步骤 1 邮箱：%s", acc["email"])
     wait_ele(page, "#accountName", "email input", timeout=25).input(acc["email"])
     click_ele(page, "#submit", "email submit")
     time.sleep(2)
 
     wait_or_refresh(page, "#capture-country", "country selector")
-    LOG.info("Reload page to ensure full registration form")
+    LOG.info("刷新页面以确保注册表单完整加载")
     page.refresh()
     time.sleep(3)
     wait_or_refresh(page, "#capture-country", "country selector after reload")
 
-    LOG.info("Step 2 country: %s", COUNTRY)
+    LOG.info("步骤 2 国家/地区：%s", COUNTRY)
     # RuyiPage 的 native select.by_value 在这个页面上容易只打开下拉框、不稳定改值；
     # 这里改用和 Playwright 版一致的 DOM setter + input/change 事件。
     country_result = set_input_value_js(page, "#capture-country", COUNTRY, input_type="select")
-    LOG.info("Country set result: %s", country_result)
+    LOG.info("国家/地区设置结果：%s", country_result)
     if not country_result.get("ok") or country_result.get("value") != COUNTRY:
-        raise RuntimeError(f"country set failed: {country_result}")
+        raise RuntimeError(f"国家/地区设置失败：{country_result}")
     time.sleep(1.5)
 
     close_cookie_banner_ruyi(page)
-    LOG.info("Step 3 birthday: %s-%s-%s", acc["birth_year"], acc["birth_month"], acc["birth_day"])
+    LOG.info("步骤 3 生日：%s-%s-%s", acc["birth_year"], acc["birth_month"], acc["birth_day"])
     fill_birthday_ruyi(page, acc)
     time.sleep(0.5)
     click_ele(page, "#flow-form-submit-btn", "birthday submit")
     time.sleep(2)
 
-    LOG.info("Step 4 name: %s %s", acc["first_name"], acc["last_name"])
+    LOG.info("步骤 4 姓名：%s %s", acc["first_name"], acc["last_name"])
     try:
         wait_ele(page, "#capture-first-name", "first name", timeout=8)
     except Exception:
@@ -790,15 +790,15 @@ def drive_original_to_battletag(page, acc: Dict[str, str], out: Path) -> None:
     click_ele(page, "#flow-form-submit-btn", "name submit")
     time.sleep(2)
 
-    LOG.info("Step 5 email confirmation")
+    LOG.info("步骤 5 邮箱确认")
     actual_email = elem_value(page, "#capture-email")
     if actual_email != acc["email"]:
         screenshot(page, out / "original_screenshots" / "error_email_mismatch.png")
-        raise RuntimeError(f"email mismatch actual={actual_email} expected={acc['email']}")
+        raise RuntimeError(f"邮箱不一致：实际={actual_email}，期望={acc['email']}")
     click_ele(page, "#flow-form-submit-btn", "email confirmation submit")
     time.sleep(2)
 
-    LOG.info("Step 6 legal checkboxes")
+    LOG.info("步骤 6 勾选法律协议")
     legal_result = page.run_js(
         """return (() => {
           ['#capture-opt-in-blizzard-news-special-offers','#legal-checkboxes > label > input.step__checkbox'].forEach(sel => {
@@ -815,21 +815,21 @@ def drive_original_to_battletag(page, acc: Dict[str, str], out: Path) -> None:
         })();""",
         timeout=10,
     )
-    LOG.info("Legal checkbox result: %s", legal_result)
+    LOG.info("法律协议勾选结果：%s", legal_result)
     if legal_result and not all(x.get("checked") for x in legal_result):
-        LOG.warning("Some legal checkboxes are still unchecked: %s", legal_result)
+        LOG.warning("仍有法律协议复选框未勾选：%s", legal_result)
     time.sleep(0.5)
     click_ele(page, "#flow-form-submit-btn", "legal submit")
     time.sleep(2)
 
-    LOG.info("Step 7 password")
+    LOG.info("步骤 7 密码")
     wait_or_refresh(page, "#capture-password", "password field")
     wait_ele(page, "#capture-password", "password field").input(acc["password"])
     time.sleep(0.5)
     click_ele(page, "#flow-form-submit-btn", "password submit")
     time.sleep(2)
 
-    LOG.info("Step 8 BattleTag: %s", acc["battle_tag"])
+    LOG.info("步骤 8 战网昵称：%s", acc["battle_tag"])
     wait_or_refresh(page, "#capture-battletag", "BattleTag field")
     page.run_js(
         """function(val) {
@@ -876,7 +876,7 @@ def wait_for_solver_token(page, timeout: float, out: Path) -> Dict[str, Any]:
             )
             status = state.get("status") if state else None
             if status != last_status or time.time() - last_log_at >= 5:
-                LOG.info("Solver tab status: %s%s", status, f", tokenLength={state.get('tokenLength')}" if state and state.get("token") else "")
+                LOG.info("求解标签状态：%s%s", status, f"，token 长度={state.get('tokenLength')}" if state and state.get("token") else "")
                 last_status = status
                 last_log_at = time.time()
                 if state:
@@ -888,10 +888,10 @@ def wait_for_solver_token(page, timeout: float, out: Path) -> Dict[str, Any]:
                 return result
         except Exception as exc:
             if time.time() - last_log_at >= 5:
-                LOG.warning("Solver tab poll failed: %s: %s", type(exc).__name__, exc)
+                LOG.warning("轮询求解标签失败：%s：%s", type(exc).__name__, exc)
                 last_log_at = time.time()
         time.sleep(0.5)
-    result = {"ok": False, "error": f"timeout waiting for solver token after {timeout:.0f}s"}
+    result = {"ok": False, "error": f"等待求解 token 超时，已等待 {timeout:.0f} 秒"}
     write_json(out / "solver_result.json", result)
     return result
 
@@ -1021,9 +1021,9 @@ def verify_browser_egress(page, out: Path, proxy_url: Optional[str]) -> Dict[str
             page.activate()
     write_json(out / "network_route.json", result)
     if result.get("ok"):
-        LOG.info("Browser egress checked: ip=%s", result.get("ip"))
+        LOG.info("浏览器出口检查完成：IP=%s", result.get("ip"))
     else:
-        LOG.warning("Browser egress check failed: %s", result.get("error"))
+        LOG.warning("浏览器出口检查失败：%s", result.get("error"))
     return result
 
 
@@ -1060,14 +1060,14 @@ def launch_ruyi_browser(args: argparse.Namespace, proxy_url: Optional[str]):
 
 
 def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="RuyiPage Firefox same-browser manual FunCaptcha registration experiment.")
+    ap = argparse.ArgumentParser(description="RuyiPage Firefox 同浏览器手动 FunCaptcha 注册实验。")
     ap.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_ROOT), help="运行输出目录")
     ap.add_argument("--headless", action="store_true", help="使用 headless；手动求解一般不要开")
     ap.add_argument("--keep-open", action="store_true", help="结束后保持浏览器打开，按 Enter 后关闭")
     ap.add_argument("--manual-timeout", type=float, default=300.0, help="等待手动求解 token 的秒数")
     ap.add_argument("--blob-timeout", type=float, default=45.0, help="等待原标签 blob 的秒数")
     ap.add_argument("--success-timeout", type=float, default=45.0, help="注入 token 后等待注册成功的秒数")
-    ap.add_argument("--click-original-verify", action="store_true", help="提交 BattleTag 后也点击原标签 Verify；默认只在 blob 没抓到时兜底点击")
+    ap.add_argument("--click-original-verify", action="store_true", help="提交 BattleTag 后也点击原标签的 Verify；默认仅在未捕获 blob 时兜底点击")
     ap.add_argument("--skip-egress-check", action="store_true", help="不打开 ipify 检查浏览器出口")
     ap.add_argument("--shared-proxy", "--solver-proxy", dest="shared_proxy", help="显式给当前 Firefox 设置代理，例如 http://127.0.0.1:7890")
     ap.add_argument("--network-mode", type=int, choices=(1, 2), help="1=本机默认网络/代理，2=isolated-proxy-browser 节点")
@@ -1105,12 +1105,12 @@ def main() -> int:
         proxy_info = proxy_route.start()
         proxy_url = proxy_info.get("proxyURL")
     else:
-        LOG.info("Network mode 1: use local default network/system proxy")
+        LOG.info("网络模式 1：使用本机默认网络或系统代理")
         if proxy_url:
-            LOG.info("Explicit proxy for RuyiPage Firefox: %s", proxy_url)
+            LOG.info("RuyiPage Firefox 显式代理：%s", proxy_url)
 
-    LOG.info("输出目录: %s", out.resolve())
-    LOG.info("架构: RuyiPage 原注册标签 -> 同浏览器新求解标签 -> token -> 回原标签注入")
+    LOG.info("输出目录：%s", out.resolve())
+    LOG.info("架构：RuyiPage 原注册标签 -> 同浏览器新求解标签 -> token -> 回原标签注入")
 
     page = None
     solver_tab = None
@@ -1118,11 +1118,11 @@ def main() -> int:
     try:
         acc = generate_identity()
         write_json(out / "account_generated.json", acc)
-        LOG.info("账号: %s", acc["email"])
-        LOG.info("BattleTag: %s", acc["battle_tag"])
+        LOG.info("账号：%s", acc["email"])
+        LOG.info("战网昵称：%s", acc["battle_tag"])
 
         page = launch_ruyi_browser(args, proxy_url)
-        LOG.info("RuyiPage version=%s, UA=%s", getattr(ruyipage, "__version__", "?"), page.user_agent)
+        LOG.info("RuyiPage 版本=%s，UA=%s", getattr(ruyipage, "__version__", "?"), page.user_agent)
 
         if not args.skip_egress_check:
             verify_browser_egress(page, out, proxy_url)
@@ -1132,14 +1132,14 @@ def main() -> int:
         catcher = RuyiArkoseCatcher(page)
         catcher.start()
 
-        LOG.info("Submit BattleTag to trigger FunCaptcha")
+        LOG.info("提交战网昵称以触发 FunCaptcha")
         click_ele(page, "#flow-form-submit-btn", "BattleTag submit")
         time.sleep(2)
         screenshot(page, out / "original_screenshots" / "after_battletag_submit.png")
 
         blob = catcher.wait_for_blob(timeout=min(15.0, args.blob_timeout))
         if args.click_original_verify or not blob:
-            LOG.info("Click original Arkose Verify%s", " (forced)" if args.click_original_verify else " because blob was not captured yet")
+            LOG.info("点击原注册页的 Arkose 验证按钮%s", "（强制）" if args.click_original_verify else "，因为尚未捕获 blob")
             clicked = click_arkose_verify(page, timeout=25)
             write_json(out / "original_verify_click.json", {"clicked": clicked, "forced": bool(args.click_original_verify)})
             time.sleep(1.5)
@@ -1149,11 +1149,11 @@ def main() -> int:
 
         blob = blob or catcher.captured_blob
         if not blob:
-            raise RuntimeError("no Arkose blob captured from original tab through RuyiPage capture")
+            raise RuntimeError("未通过 RuyiPage 从原注册标签捕获到 Arkose blob")
 
         ctx = detect_arkose_context(page, catcher)
         if not ctx.get("siteKey"):
-            raise RuntimeError("Arkose public key not detected")
+            raise RuntimeError("未检测到 Arkose 公钥")
 
         public_ctx = {**ctx, "blobLength": len(blob), "hasBlob": True}
         write_json(out / "original_arkose_context.json", public_ctx)
@@ -1169,9 +1169,9 @@ def main() -> int:
                 "mode": "ruyipage-same-browser-new-tab",
             },
         )
-        LOG.info("Captured Arkose context: pk=%s, surl=%s, blob_len=%s", ctx.get("siteKey"), ctx.get("surl"), len(blob))
+        LOG.info("已捕获 Arkose 上下文：pk=%s，surl=%s，blob 长度=%s", ctx.get("siteKey"), ctx.get("surl"), len(blob))
 
-        LOG.info("Open solver tab in the SAME RuyiPage Firefox browser")
+        LOG.info("在同一个 RuyiPage Firefox 浏览器中打开求解标签")
         solver_tab = page.new_tab(background=False)
         html = build_solver_harness(str(ctx["siteKey"]), blob, str(ctx.get("surl") or DEFAULT_SURL))
         (out / "solver_harness.html").write_text(html, encoding="utf-8")
@@ -1183,13 +1183,13 @@ def main() -> int:
 
         solver_result = wait_for_solver_token(solver_tab, args.manual_timeout, out)
         if not solver_result.get("ok"):
-            raise TimeoutError(solver_result.get("error") or "solver tab did not return token")
+            raise TimeoutError(solver_result.get("error") or "求解标签未返回 token")
         token = str(solver_result["token"])
-        LOG.info("Solver tab returned onCompleted token, length=%s", len(token))
+        LOG.info("求解标签已通过 onCompleted 返回 token，长度=%s", len(token))
 
         inject_result = inject_token_to_original(page, token)
         write_json(out / "token_injection_result.json", inject_result)
-        LOG.info("Original tab token injection result: %s", inject_result)
+        LOG.info("原注册标签 token 注入结果：%s", inject_result)
         screenshot(page, out / "original_screenshots" / "after_token_injection.png")
 
         success = wait_registration_success(page, acc["email"], timeout=args.success_timeout)
@@ -1231,7 +1231,7 @@ def main() -> int:
         write_json(out / "summary.json", {"ok": False, "error": "KeyboardInterrupt", "outputDir": str(out.resolve())})
         return 130
     except Exception as exc:
-        LOG.error("Run failed: %s: %s", type(exc).__name__, exc, exc_info=True)
+        LOG.error("运行失败：%s：%s", type(exc).__name__, exc, exc_info=True)
         write_json(out / "summary.json", {"ok": False, "error": f"{type(exc).__name__}: {exc}", "outputDir": str(out.resolve())})
         with contextlib.suppress(Exception):
             if page:

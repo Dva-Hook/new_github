@@ -13,17 +13,17 @@
   const productMeta = {
     registration: {
       title: "注册中心",
-      subtitle: "Registration",
+      subtitle: "注册任务",
       icon: "user-round-plus",
     },
     "ban-lookup": {
       title: "封禁查询",
-      subtitle: "Ban Lookup",
+      subtitle: "封禁查询",
       icon: "shield-search",
     },
     "phone-binding": {
       title: "绑定手机",
-      subtitle: "Phone Binding",
+      subtitle: "手机绑定",
       icon: "smartphone",
     },
   };
@@ -64,7 +64,7 @@
       timeline: [
         ["20:48:45", "注册成功", "账号结果已写入批次输出", "success"],
         ["20:48:27", "求解完成", "Arkose token 已返回", ""],
-        ["20:48:12", "任务启动", "Worker #12 获取任务", ""],
+        ["20:48:12", "任务启动", "工作进程 #12 获取任务", ""],
       ],
     },
     "30252060886": {
@@ -86,7 +86,7 @@
       timeline: [
         ["19:04:18", "批次完成", "256 个任务已全部结束", "success"],
         ["18:57:36", "邮箱验证完成", "验证结果已归档", ""],
-        ["18:42:02", "任务启动", "20 个 Worker 已分配", ""],
+        ["18:42:02", "任务启动", "20 个工作进程已分配", ""],
       ],
     },
     "30241488219": {
@@ -107,7 +107,7 @@
       email: "虚拟邮箱",
       timeline: [
         ["14:19:41", "批次完成", "本地模型推理服务已释放", "success"],
-        ["14:10:24", "V11 模型加载", "CUDA Fast 模式可用", ""],
+        ["14:10:24", "V11 模型加载", "CUDA 快速模式可用", ""],
         ["14:08:03", "任务启动", "并发设置为 20", ""],
       ],
     },
@@ -129,8 +129,8 @@
       email: "指定邮箱池",
       timeline: [
         ["09:24:16", "批次终止", "连续失败超过阈值", "danger"],
-        ["09:22:40", "代理连接异常", "Worker #03 重试失败", "danger"],
-        ["09:17:08", "任务启动", "6 个 Worker 已分配", ""],
+        ["09:22:40", "代理连接异常", "工作进程 #03 重试失败", "danger"],
+        ["09:17:08", "任务启动", "6 个工作进程已分配", ""],
       ],
     },
   };
@@ -242,7 +242,7 @@
     });
 
     updateRailScope(product);
-    document.title = `${productMeta[product].title} · V5 Suite`;
+    document.title = `${productMeta[product].title} · V5 控制台`;
     closeRail();
     closeDetail();
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -267,7 +267,7 @@
       else button.removeAttribute("aria-current");
     });
 
-    document.title = `${viewTitles[view]} · V5 Suite`;
+    document.title = `${viewTitles[view]} · V5 控制台`;
     closeRail();
     closeDetail();
     document.getElementById("main-content").focus({ preventScroll: true });

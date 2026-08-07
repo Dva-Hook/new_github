@@ -68,16 +68,16 @@ def screenshot(page, path: Path, full_page: bool = True) -> bool:
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         page.screenshot(path=str(path), full_page=full_page, timeout=30_000)
-        logger.info("screenshot saved: %s", path)
+        logger.info("截图已保存：%s", path)
         return True
     except Exception as exc:
-        logger.warning("full screenshot failed %s: %s: %s", path.name, type(exc).__name__, exc)
+        logger.warning("完整页面截图失败 %s：%s：%s", path.name, type(exc).__name__, exc)
         try:
             page.screenshot(path=str(path), timeout=30_000)
-            logger.info("viewport screenshot saved: %s", path)
+            logger.info("视口截图已保存：%s", path)
             return True
         except Exception as exc2:
-            logger.warning("viewport screenshot failed %s: %s: %s", path.name, type(exc2).__name__, exc2)
+            logger.warning("视口截图失败 %s：%s：%s", path.name, type(exc2).__name__, exc2)
             return False
 
 
@@ -99,13 +99,13 @@ def screenshot_arkose_frame(page, path: Path) -> bool:
                 try:
                     if item.is_visible(timeout=1500):
                         item.screenshot(path=str(path), timeout=30_000)
-                        logger.info("frame/container screenshot saved via %s[%s]: %s", sel, i, path)
+                        logger.info("已通过 %s[%s] 保存框架/容器截图：%s", sel, i, path)
                         return True
                 except Exception:
                     pass
         except Exception:
             pass
-    logger.warning("no visible Arkose frame/container for %s", path)
+    logger.warning("未找到可见的 Arkose 框架或容器：%s", path)
     return False
 
 
@@ -122,7 +122,7 @@ def normalize_surl(value: Optional[str]) -> str:
 def origin_from_url(value: str) -> str:
     parsed = urlsplit(value)
     if not parsed.scheme or not parsed.netloc:
-        raise ValueError(f"invalid URL: {value!r}")
+        raise ValueError(f"无效 URL：{value!r}")
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
@@ -323,13 +323,13 @@ def click_verify_and_snapshot(page, catcher: Optional[CDPImageCatcher], out: Pat
         try:
             if click_verify_button(page):
                 clicked = True
-                logger.info("%s clicked Arkose Verify on attempt %s", prefix, attempt)
+                logger.info("%s 第 %s 次尝试已点击 Arkose 验证按钮", prefix, attempt)
                 break
         except Exception as exc:
-            logger.debug("%s verify click failed: %s: %s", prefix, type(exc).__name__, exc)
+            logger.debug("%s 点击验证按钮失败：%s：%s", prefix, type(exc).__name__, exc)
         time.sleep(1.0)
     if not clicked:
-        logger.warning("%s Verify button not clicked; still waiting for challenge image", prefix)
+        logger.warning("%s 未点击验证按钮；仍等待题目图片", prefix)
     wait_result = wait_challenge_image(page, catcher, wait_timeout)
     write_json(out / f"{prefix}_image_wait_result.json", wait_result)
     screenshot(page, out / f"{prefix}_after_verify_fullpage.png", full_page=True)
@@ -418,12 +418,12 @@ def create_solver_browser(user_agent: Optional[str], headless: bool):
 
 
 def drive_original_to_battletag(page, acc: Dict[str, str], out: Path) -> None:
-    logger.info("open: %s", REGISTER_URL)
+    logger.info("打开：%s", REGISTER_URL)
     page.goto(REGISTER_URL, wait_until="domcontentloaded", timeout=60_000)
     time.sleep(2)
     close_cookie_banner(page)
 
-    logger.info("step email: %s", acc["email"])
+    logger.info("步骤 1 邮箱：%s", acc["email"])
     page.locator("#accountName").fill(acc["email"])
     page.locator("#submit").click()
     time.sleep(2)
@@ -436,13 +436,13 @@ def drive_original_to_battletag(page, acc: Dict[str, str], out: Path) -> None:
     time.sleep(1.5)
 
     close_cookie_banner(page)
-    logger.info("step birthday: %s-%s-%s", acc["birth_year"], acc["birth_month"], acc["birth_day"])
+    logger.info("步骤 2 生日：%s-%s-%s", acc["birth_year"], acc["birth_month"], acc["birth_day"])
     fill_birthday(page, acc)
     time.sleep(0.5)
     page.locator("#flow-form-submit-btn").click()
     time.sleep(2)
 
-    logger.info("step name: %s %s", acc["first_name"], acc["last_name"])
+    logger.info("步骤 3 姓名：%s %s", acc["first_name"], acc["last_name"])
     try:
         page.wait_for_selector("#capture-first-name", timeout=8000)
     except Exception:
@@ -458,11 +458,11 @@ def drive_original_to_battletag(page, acc: Dict[str, str], out: Path) -> None:
     actual_email = page.locator("#capture-email").input_value()
     if actual_email != acc["email"]:
         screenshot(page, out / "error_email_mismatch.png")
-        raise RuntimeError(f"email mismatch actual={actual_email} expected={acc['email']}")
+        raise RuntimeError(f"邮箱不一致：实际={actual_email}，期望={acc['email']}")
     page.locator("#flow-form-submit-btn").click()
     time.sleep(2)
 
-    logger.info("step legal checkboxes")
+    logger.info("步骤 4 勾选法律协议")
     page.evaluate(
         """() => {
             ['#capture-opt-in-blizzard-news-special-offers','#legal-checkboxes > label > input.step__checkbox'].forEach(function(sel){
@@ -480,14 +480,14 @@ def drive_original_to_battletag(page, acc: Dict[str, str], out: Path) -> None:
     page.locator("#flow-form-submit-btn").click()
     time.sleep(2)
 
-    logger.info("step password")
+    logger.info("步骤 5 密码")
     wait_or_refresh(page, "#capture-password", "password input")
     page.locator("#capture-password").fill(acc["password"])
     time.sleep(0.5)
     page.locator("#flow-form-submit-btn").click()
     time.sleep(2)
 
-    logger.info("step battletag: %s", acc["battle_tag"])
+    logger.info("步骤 6 战网昵称：%s", acc["battle_tag"])
     wait_or_refresh(page, "#capture-battletag", "BattleTag input")
     page.evaluate(
         """
@@ -508,7 +508,7 @@ def drive_original_to_battletag(page, acc: Dict[str, str], out: Path) -> None:
             timeout=5000,
         )
     except Exception:
-        logger.warning("submit button enable wait timeout")
+        logger.warning("等待提交按钮启用超时")
     screenshot(page, out / "original_before_battletag_submit.png")
 
 
@@ -518,7 +518,7 @@ def main() -> int:
     headless = _truthy(os.environ.get("HEADLESS"), default=True)
     out = Path(os.environ.get("SNAPSHOT_OUTPUT_DIR", "funcaptcha_snapshot_debug")) / _run_id()
     out.mkdir(parents=True, exist_ok=True)
-    logger.info("output dir: %s", out.resolve())
+    logger.info("输出目录：%s", out.resolve())
 
     acc = generate_identity()
     write_json(
@@ -539,7 +539,7 @@ def main() -> int:
         original_img = CDPImageCatcher(debug_port=ORIGINAL_PORT, label="ORIGINAL-IMAGE")
         original_img.start()
 
-        logger.info("submit BattleTag to trigger FunCaptcha")
+        logger.info("提交战网昵称以触发 FunCaptcha")
         original_page.locator("#flow-form-submit-btn").click()
         time.sleep(2)
         screenshot(original_page, out / "original_after_battletag_submit.png")
@@ -548,10 +548,10 @@ def main() -> int:
         original_result = click_verify_and_snapshot(original_page, original_img, out, "original", wait_timeout)
         blob = blob_catcher.captured_blob or blob_before_verify or blob_catcher.wait_for_blob(timeout=blob_timeout)
         if not blob:
-            raise RuntimeError("no Arkose blob captured from original browser")
+            raise RuntimeError("原浏览器未捕获到 Arkose blob")
         ctx = detect_arkose_context(original_page, blob_catcher)
         if not ctx.get("siteKey"):
-            raise RuntimeError("Arkose public key not detected")
+            raise RuntimeError("未检测到 Arkose 公钥")
         public_ctx = {**ctx, "blobLength": len(blob), "blobCapturedBeforeVerify": bool(blob_before_verify)}
         write_json(out / "original_arkose_context.json", public_ctx)
         save_cdp_images(original_img, str(out / "original_cdp_images"), prefix="original_captcha")
@@ -573,16 +573,16 @@ def main() -> int:
         try:
             if original_browser:
                 original_browser.close()
-                logger.info("original browser closed before launching solver browser")
+                logger.info("启动求解浏览器前已关闭原浏览器")
         except Exception as exc:
-            logger.warning("original browser close before solver failed: %s: %s", type(exc).__name__, exc)
+            logger.warning("关闭原浏览器后再启动求解器失败：%s：%s", type(exc).__name__, exc)
         finally:
             original_browser = None
             original_page = None
 
-        logger.info("launch solver browser: port=%s headless=%s", SOLVER_PORT, headless)
+        logger.info("启动求解浏览器：端口=%s 无头模式=%s", SOLVER_PORT, headless)
         solver_browser, _, solver_page = create_solver_browser(ctx.get("userAgent"), headless=headless)
-        solver_page.on("console", lambda msg: logger.info("solver-console[%s] %s", msg.type, msg.text))
+        solver_page.on("console", lambda msg: logger.info("求解器控制台[%s] %s", msg.type, msg.text))
         solver_blob = CDPBlobCatcher(debug_port=SOLVER_PORT, label="SOLVER-BLOB")
         solver_blob.start()
         solver_img = CDPImageCatcher(debug_port=SOLVER_PORT, label="SOLVER-IMAGE")
@@ -612,10 +612,10 @@ def main() -> int:
                 "solverImageRecords": solver_image_records,
             },
         )
-        logger.info("done: %s", out.resolve())
+        logger.info("完成：%s", out.resolve())
         return 0
     except Exception as exc:
-        logger.error("snapshot failed: %s: %s", type(exc).__name__, exc, exc_info=True)
+        logger.error("快照失败：%s：%s", type(exc).__name__, exc, exc_info=True)
         write_json(out / "summary.json", {"ok": False, "error": f"{type(exc).__name__}: {exc}", "outputDir": str(out.resolve())})
         try:
             if locals().get("original_page") is not None:

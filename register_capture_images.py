@@ -30,10 +30,10 @@ CAPTCHA_OUTPUT_DIR = os.environ.get("CAPTCHA_OUTPUT_DIR", "captcha_images")
 def wait_or_refresh(page, selector: str, desc: str, timeout: int = 25):
     try:
         page.wait_for_selector(selector, timeout=timeout * 1000)
-        logger.info("ready: %s", desc)
+        logger.info("已就绪：%s", desc)
         return page.locator(selector).first
     except Exception:
-        logger.warning("timeout waiting for %s, reload and retry", desc)
+        logger.warning("等待 %s 超时，刷新并重试", desc)
         page.reload()
         time.sleep(5)
         page.wait_for_selector(selector, timeout=timeout * 1000)
@@ -78,12 +78,12 @@ def run_capture(acc) -> bool:
     image_catcher = None
     try:
         browser, context, page = create_cloak_browser()
-        logger.info("open: %s", REGISTER_URL)
+        logger.info("打开：%s", REGISTER_URL)
         page.goto(REGISTER_URL, wait_until="domcontentloaded")
         time.sleep(2)
         close_cookie_banner(page)
 
-        logger.info("step email: %s", acc["email"])
+        logger.info("步骤 1 邮箱：%s", acc["email"])
         page.locator("#accountName").fill(acc["email"])
         page.locator("#submit").click()
         time.sleep(2)
@@ -96,13 +96,13 @@ def run_capture(acc) -> bool:
         time.sleep(1.5)
 
         close_cookie_banner(page)
-        logger.info("step birthday: %s-%s-%s", acc["birth_year"], acc["birth_month"], acc["birth_day"])
+        logger.info("步骤 2 生日：%s-%s-%s", acc["birth_year"], acc["birth_month"], acc["birth_day"])
         fill_birthday(page, acc)
         time.sleep(0.5)
         page.locator("#flow-form-submit-btn").click()
         time.sleep(2)
 
-        logger.info("step name: %s %s", acc["first_name"], acc["last_name"])
+        logger.info("步骤 3 姓名：%s %s", acc["first_name"], acc["last_name"])
         try:
             page.wait_for_selector("#capture-first-name", timeout=8000)
         except Exception:
@@ -117,13 +117,13 @@ def run_capture(acc) -> bool:
 
         actual_email = page.locator("#capture-email").input_value()
         if actual_email != acc["email"]:
-            logger.error("email mismatch: %s", actual_email)
+            logger.error("邮箱不一致：%s", actual_email)
             page.screenshot(path="error_email.png")
             return False
         page.locator("#flow-form-submit-btn").click()
         time.sleep(2)
 
-        logger.info("step legal checkboxes")
+        logger.info("步骤 4 勾选法律协议")
         page.evaluate(
             """() => {
                 ['#capture-opt-in-blizzard-news-special-offers','#legal-checkboxes > label > input.step__checkbox'].forEach(function(sel){
@@ -141,14 +141,14 @@ def run_capture(acc) -> bool:
         page.locator("#flow-form-submit-btn").click()
         time.sleep(2)
 
-        logger.info("step password")
+        logger.info("步骤 5 密码")
         wait_or_refresh(page, "#capture-password", "password input")
         page.locator("#capture-password").fill(acc["password"])
         time.sleep(0.5)
         page.locator("#flow-form-submit-btn").click()
         time.sleep(2)
 
-        logger.info("step battletag: %s", acc["battle_tag"])
+        logger.info("步骤 6 战网昵称：%s", acc["battle_tag"])
         wait_or_refresh(page, "#capture-battletag", "BattleTag input")
         page.evaluate(
             """
@@ -169,12 +169,12 @@ def run_capture(acc) -> bool:
                 timeout=5000,
             )
         except Exception:
-            logger.warning("submit button enable wait timeout")
+            logger.warning("等待提交按钮启用超时")
 
         image_catcher = CDPImageCatcher(debug_port=CDP_DEBUG_PORT, label=str(os.environ.get("MATRIX_INDEX", "1")))
         image_catcher.start()
 
-        logger.info("submit BattleTag to trigger FunCaptcha")
+        logger.info("提交战网昵称以触发 FunCaptcha")
         page.locator("#flow-form-submit-btn").click()
         time.sleep(2)
 
@@ -184,7 +184,7 @@ def run_capture(acc) -> bool:
             out_dir=CAPTCHA_OUTPUT_DIR,
             max_submits=CAPTCHA_RANDOM_SUBMITS,
         )
-        logger.info("capture summary: %s", summary)
+        logger.info("捕获摘要：%s", summary)
         try:
             page.screenshot(path=os.path.join(CAPTCHA_OUTPUT_DIR, "final_page.png"))
         except Exception:
@@ -193,7 +193,7 @@ def run_capture(acc) -> bool:
         return True
 
     except Exception as e:
-        logger.error("capture exception: %s: %s", type(e).__name__, e, exc_info=True)
+        logger.error("捕获异常：%s：%s", type(e).__name__, e, exc_info=True)
         try:
             if browser and browser.contexts:
                 for p in browser.contexts[0].pages:
@@ -217,13 +217,13 @@ def run_capture(acc) -> bool:
 def main():
     acc = generate_identity()
     logger.info("=" * 60)
-    logger.info("FunCaptcha image capture mode")
-    logger.info("email=%s", acc["email"])
-    logger.info("battle_tag=%s", acc["battle_tag"])
-    logger.info("max_submits=%s output=%s", CAPTCHA_RANDOM_SUBMITS, CAPTCHA_OUTPUT_DIR)
+    logger.info("FunCaptcha 图片捕获模式")
+    logger.info("邮箱=%s", acc["email"])
+    logger.info("战网昵称=%s", acc["battle_tag"])
+    logger.info("最大提交次数=%s 输出目录=%s", CAPTCHA_RANDOM_SUBMITS, CAPTCHA_OUTPUT_DIR)
     logger.info("=" * 60)
     ok = run_capture(acc)
-    logger.info("capture finished: %s", "ok" if ok else "failed")
+    logger.info("捕获结束：%s", "成功" if ok else "失败")
 
 
 if __name__ == "__main__":

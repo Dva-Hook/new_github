@@ -62,9 +62,7 @@ def _setup_v6_logging(path: Path) -> None:
 
 def _build_parser_v6():
     parser = _V5_BUILD_PARSER()
-    parser.description = (
-        "V5 persistent HTTP registration logic with V6 supplied-email input"
-    )
+    parser.description = "V5 持久 HTTP 注册逻辑 + V6 指定邮箱输入"
     for action in parser._actions:
         if action.dest == "email_source":
             action.help = (
@@ -82,7 +80,7 @@ def _build_parser_v6():
         "--verify-email",
         choices=("yes", "no"),
         default=verify_email_default,
-        help="verify the supplied mailbox after registration (default: yes)",
+        help="注册后验证指定邮箱（默认：是）",
     )
     return parser
 

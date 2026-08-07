@@ -256,7 +256,7 @@ class RuyiPageAdapter(RuyiContextAdapter):
             except Exception:
                 pass
             time.sleep(0.15)
-        raise TimeoutError(f"wait_for_selector timeout: {selector}")
+        raise TimeoutError(f"等待选择器超时：{selector}")
 
     def wait_for_function(self, script: str, timeout: int = 30000):
         end = time.time() + max(0.5, float(timeout) / 1000.0)
@@ -269,7 +269,7 @@ class RuyiPageAdapter(RuyiContextAdapter):
             except Exception as exc:
                 last = exc
             time.sleep(0.15)
-        raise TimeoutError(f"wait_for_function timeout: {last}")
+        raise TimeoutError(f"等待函数条件超时：{last}")
 
     def select_option(self, selector: str, value: str):
         return self.evaluate(
@@ -312,7 +312,7 @@ class RuyiBlobCatcher:
 
     def __init__(self, debug_port=0, ws_url=None, label=""):
         if _CURRENT_PAGE is None:
-            raise RuntimeError("RuyiPage has not been launched yet")
+            raise RuntimeError("RuyiPage 尚未启动")
         self.page = _CURRENT_PAGE
         self._raw = _CURRENT_PAGE._raw
         self._label = label or "ruyi"
@@ -349,7 +349,7 @@ class RuyiBlobCatcher:
         self._subscription_id = result.get("subscription")
         self._driver.set_callback("network.beforeRequestSent", self._on_request, context=None)
         self._driver.set_callback("network.responseCompleted", self._on_response, context=None)
-        logger.info(f"[{self._label}] RuyiPage BiDi blob catcher started")
+        logger.info(f"[{self._label}] RuyiPage BiDi blob 捕获器已启动")
 
     def stop(self):
         from ruyipage._bidi import network as bidi_network
@@ -424,7 +424,7 @@ class RuyiBlobCatcher:
             blob = _extract_blob_from_body(body)
             if blob and blob != self.captured_blob:
                 self.captured_blob = blob
-                logger.info(f"[{self._label}] RuyiPage captured blob len={len(blob)}, pk={self.captured_pk}")
+                logger.info(f"[{self._label}] RuyiPage 已捕获 blob，长度={len(blob)}，pk={self.captured_pk}")
         elif "/fc/ca/" in url and body:
             fp = f"{rid}:{len(body)}"
             if fp not in self._handled:
@@ -466,7 +466,7 @@ def create_ruyipage_browser():
     browser = RuyiBrowserAdapter(raw_page, page)
     context = browser.contexts[0]
     logger.info(
-        "RuyiPage Firefox launched: version=%s, headless=%s, proxy=%s, UA=%s",
+        "RuyiPage Firefox 已启动：版本=%s，无头模式=%s，代理=%s，UA=%s",
         getattr(ruyipage, "__version__", "?"),
         headless,
         proxy or "<default>",
@@ -486,16 +486,16 @@ def patch_register_module():
 
 def main():
     if not base.CAPMONSTER_API_KEY:
-        logger.warning("CAPMONSTER_API_KEY is empty; RuyiPage workflow needs CapMonster fallback because CDP image capture is unavailable")
+        logger.warning("CAPMONSTER_API_KEY 为空；由于 CDP 图片捕获不可用，RuyiPage 工作流需要 CapMonster 作为备用求解方式")
     patch_register_module()
     acc = base.generate_identity()
     base.logger.info("=" * 50)
-    base.logger.info("Battle.net auto register - RuyiPage Firefox backend")
-    base.logger.info(f"   email: {acc['email']}")
-    base.logger.info(f"   BattleTag: {acc['battle_tag']}")
+    base.logger.info("战网自动注册 - RuyiPage Firefox 后端")
+    base.logger.info(f"   邮箱：{acc['email']}")
+    base.logger.info(f"   战网昵称：{acc['battle_tag']}")
     base.logger.info("=" * 50)
     ok = base.register_one(acc)
-    base.logger.info(f"\nRegistration finished: {'success' if ok else 'failed'}")
+    base.logger.info(f"\n注册结束：{'成功' if ok else '失败'}")
     if not ok:
         sys.exit(1)
 

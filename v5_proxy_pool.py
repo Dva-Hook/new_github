@@ -61,11 +61,11 @@ def _build_url(host: str, port_text: str, username: str, password: str) -> Proxy
     try:
         port = int(port_text)
     except ValueError as exc:
-        raise ValueError("proxy port must be an integer") from exc
+        raise ValueError("代理端口必须是整数") from exc
     if not host or not 1 <= port <= 65535:
-        raise ValueError("proxy host or port is invalid")
+        raise ValueError("代理主机或端口无效")
     if not username or not password:
-        raise ValueError("proxy username and password are required")
+        raise ValueError("必须提供代理用户名和密码")
     url_host = f"[{host}]" if ":" in host else host
     userinfo = f"{quote(username, safe='')}:{quote(password, safe='')}@"
     return ProxyRecord(
@@ -78,16 +78,16 @@ def _build_url(host: str, port_text: str, username: str, password: str) -> Proxy
 def parse_proxy_line(raw: str, source_line: int = 0) -> ProxyRecord:
     value = str(raw or "").strip().rstrip(",").strip()
     if not value:
-        raise ValueError("proxy line is blank")
+        raise ValueError("代理行为空")
 
     if "://" in value:
         parsed = urlsplit(value)
         if parsed.scheme.lower() not in {"http", "https", "socks5", "socks5h"}:
-            raise ValueError(f"unsupported proxy scheme: {parsed.scheme}")
+            raise ValueError(f"不支持的代理协议：{parsed.scheme}")
         if not parsed.hostname or not parsed.port:
-            raise ValueError("proxy URL has no host or port")
+            raise ValueError("代理 URL 缺少主机或端口")
         if parsed.username is None or parsed.password is None:
-            raise ValueError("proxy URL has no username/password")
+            raise ValueError("代理 URL 缺少用户名或密码")
         record = _build_url(
             parsed.hostname,
             str(parsed.port),
@@ -119,7 +119,7 @@ def parse_proxy_line(raw: str, source_line: int = 0) -> ProxyRecord:
                 or not parsed.port
             ):
                 raise ValueError(
-                    "expected ip:port:username:password or username:password@ip:port"
+                    "应使用 ip:端口:用户名:密码 或 用户名:密码@ip:端口 格式"
                 )
             record = _build_url(
                 parsed.hostname,
@@ -143,28 +143,28 @@ def load_proxy_pool(path: Path) -> list[ProxyRecord]:
             previous = seen.get(record.url)
             if previous is not None:
                 errors.append(
-                    f"line {line_number}: duplicate proxy from line {previous}"
+                    f"第 {line_number} 行：与第 {previous} 行的代理重复"
                 )
                 continue
             seen[record.url] = line_number
             records.append(record)
         except ValueError as exc:
-            errors.append(f"line {line_number}: {exc}")
+            errors.append(f"第 {line_number} 行：{exc}")
     if errors:
         sample = "; ".join(errors[:5])
-        raise ValueError(f"invalid proxy entries ({len(errors)}): {sample}")
+        raise ValueError(f"无效代理条目（{len(errors)}）：{sample}")
     if not records:
-        raise ValueError(f"proxy pool is empty: {path}")
+        raise ValueError(f"代理池为空：{path}")
     return records
 
 
 def proxy_for_job(path: Path, one_based_index: int) -> ProxyRecord:
     if one_based_index < 1:
-        raise ValueError("job index must be one-based")
+        raise ValueError("任务序号必须从 1 开始")
     records = load_proxy_pool(path)
     if one_based_index > len(records):
         raise ValueError(
-            f"job index {one_based_index} exceeds proxy pool size {len(records)}"
+            f"任务序号 {one_based_index} 超过代理池数量 {len(records)}"
         )
     return records[one_based_index - 1]
 
@@ -178,19 +178,19 @@ def proxy_candidates_for_job(
 ) -> list[ProxyRecord]:
     """Return a collision-free candidate shard for one matrix job."""
     if job_count < 1:
-        raise ValueError("job count must be positive")
+        raise ValueError("任务数量必须为正数")
     if not 1 <= one_based_index <= job_count:
         raise ValueError(
-            f"job index {one_based_index} is outside the configured "
-            f"job count {job_count}"
+            f"任务序号 {one_based_index} 超过配置的任务数量 "
+            f"{job_count}"
         )
     if len(records) < job_count:
         raise ValueError(
-            f"proxy pool has {len(records)} entries, but "
-            f"{job_count} jobs were requested"
+            f"代理池有 {len(records)} 条记录，但请求了 "
+            f"{job_count} 个任务"
         )
     if max_candidates < 1:
-        raise ValueError("max candidates must be positive")
+        raise ValueError("最大候选数必须为正数")
     return list(records[one_based_index - 1 :: job_count][:max_candidates])
 
 
@@ -210,9 +210,9 @@ def probe_proxy(
 ) -> ProxyProbeResult:
     """Verify target HTTPS/TLS reachability through one proxy."""
     if timeout <= 0:
-        raise ValueError("probe timeout must be positive")
+        raise ValueError("探测超时时间必须为正数")
     if not urls:
-        raise ValueError("at least one probe URL is required")
+        raise ValueError("至少需要一个探测 URL")
 
     from curl_cffi import requests as curl_requests
 
@@ -295,8 +295,8 @@ def allocate_healthy_proxy(
             return record, attempts
     raise ProxyAllocationError(
         (
-            f"no reachable proxy for job {one_based_index}; "
-            f"tested {len(attempts)} isolated candidates"
+            f"任务 {one_based_index} 没有可连通代理；"
+            f"已测试 {len(attempts)} 个独立候选"
         ),
         attempts,
     )
@@ -307,19 +307,19 @@ def _format_checks(result: ProxyProbeResult) -> str:
     for check in result.checks:
         outcome = str(check.status) if check.status is not None else check.error
         values.append(f"{check.target}={outcome}@{check.elapsed_ms}ms")
-    return ",".join(values) or "no-checks"
+    return ",".join(values) or "无检查结果"
 
 
 def _append_github_env(name: str, value: str) -> None:
     target = os.environ.get("GITHUB_ENV")
     if not target:
-        raise RuntimeError("GITHUB_ENV is not set")
+        raise RuntimeError("未设置 GITHUB_ENV")
     with Path(target).open("a", encoding="utf-8") as handle:
         handle.write(f"{name}={value}\n")
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Validate or allocate a V5 proxy pool")
+    parser = argparse.ArgumentParser(description="校验或分配 V5 代理池")
     parser.add_argument("--file", type=Path, required=True)
     parser.add_argument("--require", type=int, default=0)
     parser.add_argument("--index", type=int)
@@ -334,15 +334,15 @@ def main() -> int:
     records = load_proxy_pool(args.file)
     if args.require and len(records) < args.require:
         raise SystemExit(
-            f"proxy pool has {len(records)} entries, but {args.require} jobs were requested"
+            f"代理池有 {len(records)} 条记录，但请求了 {args.require} 个任务"
         )
     if args.index is None:
-        print(f"proxy pool valid: count={len(records)}")
+        print(f"代理池校验通过：数量={len(records)}")
         return 0
 
     if args.preflight:
         if args.job_count is None:
-            raise SystemExit("--job-count is required with --preflight")
+            raise SystemExit("使用 --preflight 时必须提供 --job-count")
         probe_urls = tuple(args.probe_url) or DEFAULT_PREFLIGHT_URLS
         allocation_error: ProxyAllocationError | None = None
         try:
@@ -358,11 +358,11 @@ def main() -> int:
             attempts = exc.attempts
             allocation_error = exc
         for candidate, result in attempts:
-            state = "passed" if result.ok else "failed"
+            state = "通过" if result.ok else "失败"
             print(
-                f"proxy preflight {state}: job={args.index} "
-                f"source_line={candidate.source_line} endpoint={candidate.display} "
-                f"checks={_format_checks(result)}"
+                f"代理预检{state}：任务={args.index}，"
+                f"源行={candidate.source_line}，端点={candidate.display}，"
+                f"检查={_format_checks(result)}"
             )
         if allocation_error is not None:
             raise SystemExit(str(allocation_error)) from allocation_error
@@ -373,8 +373,8 @@ def main() -> int:
         _append_github_env("REGISTRATION_PROXY", record.url)
         _append_github_env("V5_PROXY_SOURCE_LINE", str(record.source_line))
     print(
-        f"proxy allocated: job={args.index} source_line={record.source_line} "
-        f"endpoint={record.display}"
+        f"代理已分配：任务={args.index}，源行={record.source_line}，"
+        f"端点={record.display}"
     )
     return 0
 

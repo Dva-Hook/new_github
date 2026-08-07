@@ -45,7 +45,7 @@ def _load_v3_solver_modules():
         module = types.ModuleType("cloakbrowser")
 
         def unavailable_launch(*_args, **_kwargs):
-            raise RuntimeError("CloakBrowser is not part of the V4 runtime")
+            raise RuntimeError("CloakBrowser 不属于 V4 运行时")
 
         module.launch = unavailable_launch
         sys.modules["cloakbrowser"] = module
@@ -143,7 +143,7 @@ def parse_proxy(value: Optional[str]) -> ProxySettings:
         parts = raw.split(":", 3)
         if len(parts) not in (2, 4):
             raise ValueError(
-                "proxy must be blank, host:port, host:port:user:password, or a URL"
+                "代理必须留空，或使用 主机:端口、主机:端口:用户名:密码、URL 格式"
             )
         host, port_text = parts[0].strip(), parts[1].strip()
         username = parts[2] if len(parts) == 4 else None
@@ -157,20 +157,20 @@ def parse_proxy(value: Optional[str]) -> ProxySettings:
         username = unquote(parsed.username) if parsed.username is not None else None
         password = unquote(parsed.password) if parsed.password is not None else None
         if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
-            raise ValueError("proxy URL must not contain a path, query, or fragment")
+            raise ValueError("代理 URL 不能包含路径、查询参数或片段")
 
     if scheme not in {"http", "https", "socks5", "socks5h"}:
-        raise ValueError(f"unsupported proxy scheme: {scheme}")
+        raise ValueError(f"不支持的代理协议：{scheme}")
     if not host:
-        raise ValueError("proxy host is empty")
+        raise ValueError("代理主机为空")
     try:
         port = int(port_text)
     except (TypeError, ValueError) as exc:
-        raise ValueError("proxy port must be an integer") from exc
+        raise ValueError("代理端口必须是整数") from exc
     if not 1 <= port <= 65535:
-        raise ValueError(f"proxy port is out of range: {port}")
+        raise ValueError(f"代理端口超出范围：{port}")
     if (username is None) != (password is None):
-        raise ValueError("proxy username and password must be provided together")
+        raise ValueError("代理用户名和密码必须同时提供")
 
     userinfo = ""
     has_auth = username is not None
@@ -278,10 +278,10 @@ def install_low_traffic_filter(page: Any) -> bool:
 
     try:
         page.intercept.start_requests(handler)
-        LOG.info("Low-traffic browser filter enabled (fonts/media/analytics blocked)")
+        LOG.info("已启用低流量浏览器过滤器（已屏蔽字体、媒体和统计资源）")
         return True
     except Exception as exc:
-        LOG.warning("Low-traffic filter unavailable: %s: %s", type(exc).__name__, exc)
+        LOG.warning("低流量过滤器不可用：%s：%s", type(exc).__name__, exc)
         return False
 
 
@@ -293,7 +293,7 @@ def launch_ruyi_browser(
     """Use the V3 RuyiPage launch settings without logging proxy credentials."""
 
     LOG.info(
-        "Launching RuyiPage Firefox: headless=%s proxy=%s",
+        "正在启动 RuyiPage Firefox：无界面=%s，代理=%s",
         args.headless,
         proxy.display,
     )
@@ -321,12 +321,12 @@ def launch_ruyi_browser(
             options.set_browser_path(browser_path)
         page = page_type(options)
         LOG.info(
-            "Firefox startup background network disabled: preferences=%s",
+            "已禁用 Firefox 启动时的后台网络请求：首选项=%s",
             len(_FIREFOX_LOW_TRAFFIC_PREFS),
         )
     else:
         LOG.warning(
-            "RuyiPage options API unavailable; using launch() without startup preferences"
+            "RuyiPage 选项 API 不可用，将使用不含启动首选项的 launch()"
         )
         page = ruyi.launch(
             headless=bool(args.headless),
@@ -358,7 +358,7 @@ def run_v4_solver_tab(
             and details.get("imageSize") is None
         ):
             raise RuntimeError(
-                "transient Arkose challenge image response was not decodable; retry required"
+                "Arkose 题图的临时响应无法解码，需要重试"
             ) from exc
         raise
 
@@ -539,8 +539,8 @@ def log_proxy_traffic_phases(report: Mapping[str, Any]) -> None:
         if not phase:
             continue
         LOG.info(
-            "Proxy traffic phase %s: upload=%.4f MiB download=%.4f MiB "
-            "total=%.4f MiB bytes=%s connections=%s failures=%s",
+            "代理流量阶段 %s：上传=%.4f MiB，下载=%.4f MiB，"
+            "总计=%.4f MiB，字节=%s，连接=%s，失败=%s",
             name,
             float(phase.get("uploadMiB") or 0.0),
             float(phase.get("downloadMiB") or 0.0),
@@ -551,8 +551,8 @@ def log_proxy_traffic_phases(report: Mapping[str, Any]) -> None:
         )
         if int(phase.get("directTotalBytes") or 0):
             LOG.info(
-                "Direct bypass phase %s: upload=%.4f MiB download=%.4f MiB "
-                "total=%.4f MiB bytes=%s connections=%s failures=%s",
+                "直连分流阶段 %s：上传=%.4f MiB，下载=%.4f MiB，"
+                "总计=%.4f MiB，字节=%s，连接=%s，失败=%s",
                 name,
                 float(phase.get("directUploadMiB") or 0.0),
                 float(phase.get("directDownloadMiB") or 0.0),
@@ -563,7 +563,7 @@ def log_proxy_traffic_phases(report: Mapping[str, Any]) -> None:
             )
     if int(report.get("unaccountedBytes") or 0):
         LOG.info(
-            "Proxy traffic unaccounted: %.4f MiB bytes=%s",
+            "未归类的代理流量：%.4f MiB，字节=%s",
             float(report.get("unaccountedMiB") or 0.0),
             int(report.get("unaccountedBytes") or 0),
         )
@@ -572,8 +572,8 @@ def log_proxy_traffic_phases(report: Mapping[str, Any]) -> None:
 def log_proxy_traffic_targets(report: Mapping[str, Any]) -> None:
     for item in list(report.get("targets") or [])[:10]:
         LOG.info(
-            "Proxy traffic target %s: upload=%.4f MiB download=%.4f MiB "
-            "total=%.4f MiB bytes=%s connections=%s failures=%s",
+            "代理流量目标 %s：上传=%.4f MiB，下载=%.4f MiB，"
+            "总计=%.4f MiB，字节=%s，连接=%s，失败=%s",
             item.get("target"),
             float(item.get("uploadMiB") or 0.0),
             float(item.get("downloadMiB") or 0.0),
@@ -584,8 +584,8 @@ def log_proxy_traffic_targets(report: Mapping[str, Any]) -> None:
         )
     for item in list(report.get("directTargets") or [])[:10]:
         LOG.info(
-            "Direct bypass target %s: upload=%.4f MiB download=%.4f MiB "
-            "total=%.4f MiB bytes=%s connections=%s failures=%s",
+            "直连分流目标 %s：上传=%.4f MiB，下载=%.4f MiB，"
+            "总计=%.4f MiB，字节=%s，连接=%s，失败=%s",
             item.get("target"),
             float(item.get("uploadMiB") or 0.0),
             float(item.get("downloadMiB") or 0.0),
@@ -625,14 +625,14 @@ def stop_browser_optimizer(
             "enabled": True,
             "error": f"{type(exc).__name__}: {exc}",
         }
-        LOG.warning("Browser traffic optimizer stop failed: %s", report["error"])
+        LOG.warning("停止浏览器流量优化器失败：%s", report["error"])
     write_browser_traffic_report(out, report)
     counts = dict(report.get("counts") or {})
     byte_counts = dict(report.get("bytes") or {})
     LOG.info(
-        "Browser traffic optimizer: directStatic=%.4f MiB directImages=%.4f MiB "
-        "cacheHit=%.4f MiB estimatedProxyAvoided=%.4f MiB candidates=%s "
-        "imageFallbacks=%s staticFallbacks=%s blocked=%s",
+        "浏览器流量优化器：直连静态资源=%.4f MiB，直连图片=%.4f MiB，"
+        "缓存命中=%.4f MiB，预计节省代理流量=%.4f MiB，候选=%s，"
+        "图片回退=%s，静态资源回退=%s，已屏蔽=%s",
         float(byte_counts.get("directStaticMiB") or 0.0),
         float(byte_counts.get("directChallengeImageMiB") or 0.0),
         float(byte_counts.get("cacheHitMiB") or 0.0),
@@ -645,12 +645,12 @@ def stop_browser_optimizer(
     failures = dict(report.get("directFetchFailures") or {})
     if failures:
         LOG.info(
-            "Direct fetch fallback reasons: %s",
+            "直连获取回退原因：%s",
             sorted(failures.items(), key=lambda item: item[1], reverse=True)[:5],
         )
     for fallback in list(report.get("directFallbacks") or [])[:10]:
         LOG.info(
-            "Direct fetch fallback: category=%s hard=%s reason=%s url=%s",
+            "直连获取回退：类别=%s，严重失败=%s，原因=%s，网址=%s",
             fallback.get("category") or "public-static",
             bool(fallback.get("hardFailure")),
             fallback.get("reason"),
@@ -663,7 +663,7 @@ def stop_browser_optimizer(
     ][:10]
     for item in proxy_responses:
         LOG.info(
-            "Proxy response: bytes=%s type=%s category=%s url=%s",
+            "代理响应：字节=%s，类型=%s，类别=%s，网址=%s",
             int(item.get("wireBodyBytesEstimate") or 0),
             item.get("resourceType"),
             item.get("category"),
@@ -722,7 +722,7 @@ def wait_rank_v11_service(base_url: str, timeout: float) -> dict[str, Any]:
             last_error = exc
             time.sleep(0.2)
     raise TimeoutError(
-        f"local V11 service was not ready within {timeout}s: {last_error}"
+        f"本地 V11 服务未在 {timeout} 秒内就绪：{last_error}"
     )
 
 
@@ -747,7 +747,7 @@ def replace_document_low_traffic(page: Any, website_url: str, html: str) -> dict
         ) or {}
     if before.get("origin") != expected_origin:
         raise RuntimeError(
-            f"solver origin mismatch: expected={expected_origin}, actual={before}"
+            f"求解器来源不匹配：预期={expected_origin}，实际={before}"
         )
     page.run_js(
         """function(html) {
@@ -793,7 +793,7 @@ def recover_blob_with_ruyi(
             blob = catcher.wait_for_blob(timeout=args.blob_timeout)
         blob = blob or catcher.captured_blob
         if not blob:
-            raise RuntimeError("RuyiPage fallback did not recover an Arkose blob")
+            raise RuntimeError("RuyiPage 回退流程未能恢复 Arkose blob")
         detected = base.detect_arkose_context(page, catcher)
         return {
             "blob": blob,
@@ -822,7 +822,7 @@ def solve_arkose_with_ruyi(
     try:
         page = launch_ruyi_browser(args, proxy, runtime_proxy_url)
         if not current.get("blob"):
-            LOG.info("HTTP response had no blob; using the RuyiPage cookie-import fallback")
+            LOG.info("HTTP 响应没有 blob，使用 RuyiPage Cookie 导入回退流程")
             current = recover_blob_with_ruyi(page, client, args, out)
 
         optimizer = BrowserResourceOptimizer(
@@ -842,8 +842,8 @@ def solve_arkose_with_ruyi(
         )
         optimizer.start()
         LOG.info(
-            "Browser traffic optimizer enabled: publicStaticDirect=%s "
-            "challengeImageDirect=%s cache=%s sessionControl=proxy",
+            "浏览器流量优化器已启用：公共静态资源直连=%s，"
+            "题图直连=%s，缓存=%s，会话控制=代理",
             proxy.enabled and not bool(args.no_direct_public_static),
             proxy.enabled and bool(args.direct_challenge_images),
             Path(args.static_cache_dir).expanduser().resolve(),
@@ -851,7 +851,7 @@ def solve_arkose_with_ruyi(
 
         blob = str(current.get("blob") or "")
         if not blob:
-            raise RuntimeError("Arkose context has no blob")
+            raise RuntimeError("Arkose 上下文中没有 blob")
         current["siteKey"] = str(current.get("siteKey") or DEFAULT_SITE_KEY)
         current["surl"] = str(current.get("surl") or DEFAULT_SURL)
         current["websiteURL"] = str(current.get("websiteURL") or args.entry_url)
@@ -875,7 +875,7 @@ def solve_arkose_with_ruyi(
             {key: value for key, value in result.items() if key != "token"},
         )
         if not result.get("ok") or not result.get("token"):
-            raise RuntimeError(str(result.get("error") or "local V11 solver returned no token"))
+            raise RuntimeError(str(result.get("error") or "本地 V11 求解器未返回 token"))
         with contextlib.suppress(Exception):
             image_catcher.stop()
         image_catcher = None
@@ -899,18 +899,18 @@ def solve_arkose_with_ruyi(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Persistent HTTP registration + RuyiPage + local Route V11"
+        description="持久 HTTP 注册 + RuyiPage + 本地 Route V11"
     )
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_ROOT))
     parser.add_argument(
         "--resume",
-        help="existing run directory or persistent_state.json",
+        help="现有运行目录或 persistent_state.json",
     )
     parser.add_argument("--entry-url", default=REGISTER_URL)
     parser.add_argument(
         "--proxy",
         default=os.environ.get("REGISTRATION_PROXY", ""),
-        help="blank/direct, host:port, host:port:user:password, or proxy URL",
+        help="留空/直连、主机:端口、主机:端口:用户名:密码或代理 URL",
     )
     parser.add_argument("--protocol-impersonate", default="chrome")
     parser.add_argument("--protocol-user-agent", default="")
@@ -921,13 +921,13 @@ def build_parser() -> argparse.ArgumentParser:
         dest="country_probe",
         action="store_true",
         default=True,
-        help="probe the GBR country form before submitting date of birth (default)",
+        help="提交出生日期前探测 GBR 国家表单（默认）",
     )
     country_probe.add_argument(
         "--no-country-probe",
         dest="country_probe",
         action="store_false",
-        help="skip the country probe for protocol diagnostics",
+        help="协议诊断时跳过国家探测",
     )
     parser.add_argument("--email")
     parser.add_argument("--password")
@@ -945,12 +945,12 @@ def build_parser() -> argparse.ArgumentParser:
             "V4_STATIC_CACHE_DIR",
             str(PROJECT_ROOT / ".cache" / "v4_public_static"),
         ),
-        help="shared cache for strictly public Arkose static assets",
+        help="仅用于 Arkose 公共静态资源的共享缓存",
     )
     parser.add_argument(
         "--no-direct-public-static",
         action="store_true",
-        help="keep public static cache misses on the configured browser route",
+        help="公共静态缓存未命中时继续使用配置的浏览器线路",
     )
     direct_images = parser.add_mutually_exclusive_group()
     direct_images.add_argument(
@@ -958,13 +958,13 @@ def build_parser() -> argparse.ArgumentParser:
         dest="direct_challenge_images",
         action="store_true",
         default=False,
-        help="experimental: download signed Arkose challenge images runner-direct",
+        help="实验功能：由运行器直连下载带签名的 Arkose 题图",
     )
     direct_images.add_argument(
         "--no-direct-challenge-images",
         dest="direct_challenge_images",
         action="store_false",
-        help="keep signed Arkose challenge images on the proxy route (default)",
+        help="带签名的 Arkose 题图继续使用代理线路（默认）",
     )
     parser.add_argument("--static-fetch-timeout", type=float, default=8.0)
     parser.add_argument("--static-cache-max-entry-mib", type=float, default=8.0)
@@ -1031,8 +1031,8 @@ def main() -> int:
             if not all(
                 identity.get(key) for key in ("email", "password", "battle_tag")
             ):
-                raise RuntimeError("resume state has no complete account identity")
-            LOG.info("Resuming persistent state: %s status=%s", resume_path, state.data.get("status"))
+                raise RuntimeError("恢复状态中没有完整的账号身份信息")
+            LOG.info("正在恢复持久状态：%s，状态=%s", resume_path, state.data.get("status"))
         else:
             identity = configured_identity(args)
             state = PersistentFlowState.create(
@@ -1055,23 +1055,23 @@ def main() -> int:
                 },
             )
         write_json(out / "account_generated.json", identity)
-        LOG.info("Output directory: %s", out)
-        LOG.info("Flow: persistent HTTP -> RuyiPage -> local V11 -> HTTP captcha-gate")
-        LOG.info("Registration country: %s (fixed)", REGISTRATION_COUNTRY)
-        LOG.info("Proxy route: %s auth=%s", proxy.display, proxy.has_auth)
+        LOG.info("输出目录：%s", out)
+        LOG.info("流程：持久 HTTP -> RuyiPage -> 本地 V11 -> HTTP captcha-gate")
+        LOG.info("注册国家：%s（固定）", REGISTRATION_COUNTRY)
+        LOG.info("代理线路：%s，身份验证=%s", proxy.display, proxy.has_auth)
         LOG.info(
-            "Public static route: %s; cache=%s",
-            "runner-direct" if proxy.enabled and not args.no_direct_public_static else "browser-route",
+            "公共静态资源线路：%s；缓存=%s",
+            "运行器直连" if proxy.enabled and not args.no_direct_public_static else "浏览器线路",
             Path(args.static_cache_dir).expanduser().resolve(),
         )
-        LOG.info("Account: %s", identity["email"])
-        LOG.info("BattleTag: %s", identity["battle_tag"])
+        LOG.info("账号：%s", identity["email"])
+        LOG.info("战网昵称：%s", identity["battle_tag"])
 
         if state.data.get("status") == "complete":
-            LOG.info("Persistent state is already complete; no network work is required")
-            print(f"Account: {identity['email']}")
-            print(f"Password: {identity['password']}")
-            print(f"BattleTag: {identity.get('battle_tag', '')}")
+            LOG.info("持久状态已经完成，无需执行网络操作")
+            print(f"账号：{identity['email']}")
+            print(f"密码：{identity['password']}")
+            print(f"战网昵称：{identity.get('battle_tag', '')}")
             return 0
 
         runtime_proxy_url = proxy.url
@@ -1079,7 +1079,7 @@ def main() -> int:
             traffic_meter = ProxyTrafficMeter(proxy.url)
             runtime_proxy_url = traffic_meter.start()
             LOG.info(
-                "Proxy traffic meter started: local=%s upstream=%s",
+                "代理流量计已启动：本地=%s，上游=%s",
                 runtime_proxy_url,
                 proxy.display,
             )
@@ -1101,13 +1101,13 @@ def main() -> int:
                 opt_in=False,
                 country_probe=bool(args.country_probe),
             )
-        LOG.info("Persistent HTTP flow reached captcha-gate")
+        LOG.info("持久 HTTP 流程已到达 captcha-gate")
         arkose = dict(state.data.get("arkose") or {})
         if not arkose.get("blob"):
             arkose = client.recover_arkose_from_last_response()
         traffic_snapshots["captchaGate"] = capture_proxy_traffic_snapshot(traffic_meter)
         LOG.info(
-            "Arkose context: source=%s siteKey=%s blobLength=%s",
+            "Arkose 上下文：来源=%s，站点密钥=%s，blob 长度=%s",
             arkose.get("source"),
             arkose.get("siteKey"),
             len(str(arkose.get("blob") or "")),
@@ -1126,14 +1126,14 @@ def main() -> int:
                 "actions": [],
                 "resumedToken": True,
             }
-            LOG.info("Using token from persistent state, length=%s", len(token))
+            LOG.info("正在使用持久状态中的令牌，长度=%s", len(token))
         else:
             health = wait_rank_v11_service(
                 args.rank_v11_url, args.rank_v11_timeout
             )
             write_json(out / "rank_v11_health.json", health)
             LOG.info(
-                "Local V11 ready: device=%s load=%.3fs warmup=%.3fs",
+                "本地 V11 已就绪：设备=%s，加载=%.3f 秒，预热=%.3f 秒",
                 health.get("device"),
                 float(health.get("model_load_seconds") or 0.0),
                 float(health.get("warmup_seconds") or 0.0),
@@ -1153,7 +1153,7 @@ def main() -> int:
                 arkose=arkose,
                 event={"completed": "local-v11-solver", "tokenLength": len(token)},
             )
-            LOG.info("RuyiPage returned Arkose token, length=%s", len(token))
+            LOG.info("RuyiPage 已返回 Arkose 令牌，长度=%s", len(token))
 
         traffic_snapshots["tokenReady"] = capture_proxy_traffic_snapshot(traffic_meter)
         outcome = client.submit_captcha(token)
@@ -1191,19 +1191,19 @@ def main() -> int:
         )
         if not success:
             LOG.error(
-                "captcha-gate did not confirm success: status=%s sample=%r",
+                "captcha-gate 未确认注册成功：状态=%s，样例=%r",
                 outcome.get("status"),
                 outcome.get("sample"),
             )
             return 1
 
-        LOG.info("Registration succeeded through the persisted HTTP session")
-        print(f"Account: {identity['email']}")
-        print(f"Password: {identity['password']}")
-        print(f"BattleTag: {identity['battle_tag']}")
+        LOG.info("已通过持久 HTTP 会话完成注册")
+        print(f"账号：{identity['email']}")
+        print(f"密码：{identity['password']}")
+        print(f"战网昵称：{identity['battle_tag']}")
         return 0
     except KeyboardInterrupt:
-        LOG.warning("Interrupted")
+        LOG.warning("运行已中断")
         write_json(
             out / "summary.json",
             {"ok": False, "error": "KeyboardInterrupt", "outputDir": str(out)},
@@ -1214,7 +1214,7 @@ def main() -> int:
             f"{type(exc).__name__}: {exc}", proxy, args.proxy
         )
         safe_traceback = redact_proxy_text(traceback.format_exc(), proxy, args.proxy)
-        LOG.error("Run failed: %s\n%s", error_text, safe_traceback)
+        LOG.error("运行失败：%s\n%s", error_text, safe_traceback)
         if state is not None:
             with contextlib.suppress(Exception):
                 state.checkpoint(
@@ -1262,8 +1262,8 @@ def main() -> int:
                 log_proxy_traffic_phases(phase_report)
                 log_proxy_traffic_targets(report)
                 LOG.info(
-                    "Proxy traffic total: upload=%.4f MiB download=%.4f MiB "
-                    "total=%.4f MiB bytes=%s connections=%s failures=%s",
+                    "代理总流量：上传=%.4f MiB，下载=%.4f MiB，"
+                    "总计=%.4f MiB，字节=%s，连接=%s，失败=%s",
                     float(report.get("uploadMiB") or 0.0),
                     float(report.get("downloadMiB") or 0.0),
                     float(report.get("totalMiB") or 0.0),

@@ -73,7 +73,7 @@ def test_email_verification_browser_rejects_non_english_locale() -> None:
         def run_js(self, script, timeout=0):
             return {"language": "zh-CN", "languages": ["zh-CN", "zh"]}
 
-    with pytest.raises(RuntimeError, match="英文 locale 校验失败"):
+    with pytest.raises(RuntimeError, match="英文区域设置校验失败"):
         v5.configure_email_browser_english(Page())
 
 

@@ -1,15 +1,15 @@
-name: Battle.net auto register (RuyiPage v3 + local V11)
+name: 战网自动注册（RuyiPage V3 + 本地 V11）
 
 on:
   workflow_dispatch:
     inputs:
       count:
-        description: "number of registration jobs (1-256)"
+        description: "注册任务数量（1-256）"
         required: true
         default: "1"
         type: string
       max_parallel:
-        description: "maximum concurrent matrix jobs (1-256)"
+        description: "最大并发任务数（1-256）"
         required: true
         default: "10"
         type: string
@@ -25,7 +25,7 @@ jobs:
       indices: ${{ steps.matrix.outputs.indices }}
       max_parallel: ${{ steps.matrix.outputs.max_parallel }}
     steps:
-      - name: Validate inputs and generate matrix
+      - name: 校验输入并生成任务矩阵
         id: matrix
         env:
           REQUESTED_COUNT: ${{ inputs.count }}
@@ -54,22 +54,22 @@ jobs:
           with output.open("a", encoding="utf-8") as fp:
               fp.write(f"indices={json.dumps(list(range(1, count + 1)))}\n")
               fp.write(f"max_parallel={max_parallel}\n")
-          print(f"matrix size: {count}, max_parallel: {max_parallel}")
+          print(f"任务矩阵：数量={count}，最大并发={max_parallel}")
           PY
 
   deps-cache:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v5
 
-      - name: Setup Python
+      - name: 配置 Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Cache wheelhouse
+      - name: 缓存 wheelhouse
         id: wheelhouse
         uses: actions/cache@v5
         with:
@@ -78,7 +78,7 @@ jobs:
           restore-keys: |
             ruyipage-v3-wheelhouse-${{ runner.os }}-py312-
 
-      - name: Build wheelhouse
+      - name: 构建 wheelhouse
         if: steps.wheelhouse.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
@@ -90,9 +90,9 @@ jobs:
           pip download -r requirements-ruyipage-v3.txt \
             --find-links .wheelhouse \
             -d .wheelhouse
-          echo "wheel count: $(find .wheelhouse -type f -name '*.whl' | wc -l)"
+          echo "wheelhouse 数量：$(find .wheelhouse -type f -name '*.whl' | wc -l)"
 
-      - name: Cache virtualenv
+      - name: 缓存虚拟环境
         id: venv
         uses: actions/cache@v5
         with:
@@ -101,7 +101,7 @@ jobs:
           restore-keys: |
             ruyipage-v3-venv-${{ runner.os }}-py312-
 
-      - name: Build virtualenv
+      - name: 构建虚拟环境
         if: steps.venv.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
@@ -125,10 +125,10 @@ jobs:
           missing = [name for name in modules if importlib.util.find_spec(name) is None]
           if missing:
               raise SystemExit(f"missing modules: {missing}")
-          print("RuyiPage v3 + local V11 dependency check OK")
+          print("RuyiPage V3 + 本地 V11 依赖检查通过")
           PY
 
-      - name: Cache RuyiPage Firefox runtime
+      - name: 缓存 RuyiPage Firefox 运行时
         id: ruyi-runtime
         uses: actions/cache@v5
         with:
@@ -137,7 +137,7 @@ jobs:
           restore-keys: |
             ruyipage-firefox-${{ runner.os }}-
 
-      - name: Warm RuyiPage Firefox runtime
+      - name: 预热 RuyiPage Firefox 运行时
         if: steps.ruyi-runtime.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
@@ -155,15 +155,15 @@ jobs:
         index: ${{ fromJSON(needs.prepare.outputs.indices) }}
 
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v5
 
-      - name: Setup Python
+      - name: 配置 Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Restore virtualenv
+      - name: 恢复虚拟环境
         id: venv
         uses: actions/cache@v5
         with:
@@ -172,7 +172,7 @@ jobs:
           restore-keys: |
             ruyipage-v3-venv-${{ runner.os }}-py312-
 
-      - name: Restore wheelhouse fallback
+      - name: 恢复 wheelhouse 备用缓存
         if: steps.venv.outputs.cache-hit != 'true'
         uses: actions/cache@v5
         with:
@@ -181,7 +181,7 @@ jobs:
           restore-keys: |
             ruyipage-v3-wheelhouse-${{ runner.os }}-py312-
 
-      - name: Restore RuyiPage Firefox runtime
+      - name: 恢复 RuyiPage Firefox 运行时
         id: ruyi-runtime
         uses: actions/cache@v5
         with:
@@ -190,7 +190,7 @@ jobs:
           restore-keys: |
             ruyipage-firefox-${{ runner.os }}-
 
-      - name: Activate or install dependencies
+      - name: 激活或安装依赖
         env:
           VENV_CACHE_HIT: ${{ steps.venv.outputs.cache-hit }}
         run: |
@@ -207,7 +207,7 @@ jobs:
               .venv/bin/pip install -r requirements-ruyipage-v3.txt
             fi
           else
-            echo "virtualenv cache hit"
+          echo "已命中虚拟环境缓存"
           fi
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
           .venv/bin/python -V
@@ -216,7 +216,7 @@ jobs:
             .venv/bin/python -m ruyipage doctor
           fi
 
-      - name: Ensure Xvfb is available
+      - name: 确保 Xvfb 可用
         run: |
           if ! command -v xvfb-run >/dev/null 2>&1 || ! command -v xauth >/dev/null 2>&1; then
             sudo apt-get update
@@ -224,7 +224,7 @@ jobs:
           fi
           xvfb-run --help >/dev/null
 
-      - name: Start persistent local V11 service
+      - name: 启动持久化本地 V11 服务
         env:
           RANK_V11_URL: http://127.0.0.1:8765
           RANK_V11_CACHE_DIR: ${{ runner.temp }}/rank_v11_cache_${{ matrix.index }}
@@ -242,12 +242,12 @@ jobs:
           if ! .venv/bin/python rank_v11/wait_ready.py \
               --url "$RANK_V11_URL" \
               --timeout 180; then
-            echo "::error::Local V11 service failed to become ready"
+            echo "::error::本地 V11 服务未能就绪"
             cat rank_v11_server.log || true
             exit 1
           fi
 
-      - name: Run RuyiPage v3 registration
+      - name: 运行 RuyiPage V3 注册
         env:
           RANK_V11_URL: http://127.0.0.1:8765
           PYTHONUNBUFFERED: "1"
@@ -255,7 +255,7 @@ jobs:
         run: |
           last_rc=1
           for attempt in 1 2 3; do
-            echo "::group::Registration attempt ${attempt}/3"
+            echo "::group::注册尝试 ${attempt}/3"
             if xvfb-run -a --server-args="-screen 0 1920x1080x24" python register_ruyipage_v3.py \
               --network-mode 1 \
               --click-style human \
@@ -263,11 +263,11 @@ jobs:
               --human-move-max-ms 1400 \
               --rank-v11-url "$RANK_V11_URL"; then
               echo "::endgroup::"
-              echo "Registration succeeded on attempt ${attempt}/3"
+              echo "第 ${attempt}/3 次尝试注册成功"
               exit 0
             else
               last_rc=$?
-              echo "Registration attempt ${attempt}/3 exited with ${last_rc}"
+              echo "第 ${attempt}/3 次注册尝试退出码：${last_rc}"
               echo "::endgroup::"
             fi
             if [ "$last_rc" -eq 42 ]; then
@@ -280,14 +280,14 @@ jobs:
           done
           exit "$last_rc"
 
-      - name: Stop local V11 service
+      - name: 停止本地 V11 服务
         if: always()
         run: |
           if [ -f rank_v11_server.pid ]; then
             kill "$(cat rank_v11_server.pid)" 2>/dev/null || true
           fi
 
-      - name: Export successful account
+      - name: 导出注册成功账号
         if: always()
         run: |
           python - <<'PY'
@@ -370,7 +370,7 @@ jobs:
           print(f"Recovered {len(recovered)} successful account(s)")
           PY
 
-      - name: Upload screenshots and debug data
+      - name: 上传截图和调试数据
         if: always()
         uses: actions/upload-artifact@v6
         with:
@@ -381,7 +381,7 @@ jobs:
             ruyipage_local_v11_register/runs/**
           if-no-files-found: ignore
 
-      - name: Upload account data
+      - name: 上传账号数据
         if: always()
         uses: actions/upload-artifact@v6
         with:
@@ -394,7 +394,7 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Download all account artifacts
+      - name: 下载全部账号构件
         continue-on-error: true
         uses: actions/download-artifact@v7
         with:
@@ -402,7 +402,7 @@ jobs:
           path: all_accounts
           merge-multiple: false
 
-      - name: Merge account files
+      - name: 合并账号文件
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -418,7 +418,7 @@ jobs:
           print(f"Merged {len(files)} account file(s)")
           PY
 
-      - name: Upload merged account data
+      - name: 上传合并后的账号数据
         uses: actions/upload-artifact@v6
         with:
           name: all-ruyipage-v3-local-registered-accounts

@@ -98,7 +98,7 @@ def extract_dynamic_prompt(
                 }
         time.sleep(0.1)
     raise RuntimeError(
-        "YesCaptcha dynamic question was not found in the live Arkose DOM"
+        "在实时 Arkose 页面中未找到 YesCaptcha 动态题目"
     )
 
 
@@ -145,28 +145,28 @@ def reencode_rgb_jpeg(image: bytes) -> bytes:
 def _json_response(response: Any) -> dict[str, Any]:
     result = response.json()
     if not isinstance(result, dict):
-        raise RuntimeError("YesCaptcha returned a non-object JSON response")
+        raise RuntimeError("YesCaptcha 返回了非对象格式的 JSON 响应")
     return result
 
 
 def _answer_from_result(result: dict[str, Any]) -> int:
     if result.get("errorId") not in (None, 0):
         raise RuntimeError(
-            "YesCaptcha failed: "
-            f"errorId={result.get('errorId')} errorCode={result.get('errorCode')}"
+            "YesCaptcha 失败："
+            f"错误 ID={result.get('errorId')}，错误代码={result.get('errorCode')}"
         )
     solution = result.get("solution") or {}
     objects = solution.get("objects") or []
     if not objects:
-        raise RuntimeError("YesCaptcha response has no solution.objects")
+        raise RuntimeError("YesCaptcha 响应中没有 solution.objects")
     try:
         answer = int(objects[0])
     except (TypeError, ValueError) as exc:
         raise RuntimeError(
-            f"YesCaptcha returned a non-integer answer: {objects[0]!r}"
+            f"YesCaptcha 返回了非整数答案：{objects[0]!r}"
         ) from exc
     if not 0 <= answer <= 11:
-        raise RuntimeError(f"YesCaptcha answer index is outside 0..11: {answer}")
+        raise RuntimeError(f"YesCaptcha 答案序号超出 0..11：{answer}")
     return answer
 
 
@@ -200,7 +200,7 @@ def classify_image(
     sleep: Callable[[float], None] = time.sleep,
 ) -> tuple[int, dict[str, Any]]:
     if not api_key.strip():
-        raise RuntimeError("YesCaptcha API key is empty")
+        raise RuntimeError("YesCaptcha API 密钥为空")
     image = image_path.read_bytes()
     retry_reasons: list[str] = []
     attempt_records: list[dict[str, Any]] = []

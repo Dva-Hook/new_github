@@ -201,7 +201,7 @@ def _wait_registration_success(page, expected_email: Optional[str] = None, timeo
         try:
             state = _captcha_state(page)
             if state == 'rejected':
-                logger.warning('Arkose value rejected while waiting registration success; stop waiting early')
+                logger.warning('等待注册成功时 Arkose 值被拒绝，提前停止等待')
                 return False
         except Exception:
             pass
@@ -227,17 +227,17 @@ def _wait_post_local_dice_result(page, timeout: float = 10.0) -> Optional[bool]:
             last_state = state
             if state == 'rejected':
                 sample = _captcha_text(page).replace('\n', ' ')[:220]
-                logger.warning(f'Local dice ended but parent page rejected/invalid: {sample}')
+                logger.warning(f'本地骰子求解结束，但父页面已拒绝或状态无效：{sample}')
                 return False
             if state == 'active':
                 text = _captcha_text(page).lower()
                 if 'i am a human' in text or 'value is invalid' in text or 'detecting humanity' in text:
-                    logger.warning('Local dice ended but page is still on humanity gate; fallback needed')
+                    logger.warning('本地骰子求解结束，但页面仍停留在人机验证页，需要备用求解')
                     return False
         except Exception:
             pass
         time.sleep(0.4)
-    logger.info(f'No success/reject verdict {timeout:.0f}s after local dice, last_state={last_state}')
+    logger.info(f'本地骰子求解后 {timeout:.0f} 秒仍无成功或拒绝结果，最后状态={last_state}')
     return None
 
 
@@ -315,25 +315,25 @@ def _select_candidate(page, answer_index: int) -> bool:
     answer_index = max(0, min(11, int(answer_index)))
     current = _get_current_candidate_index(page)
     if current == answer_index:
-        logger.info(f'🎯 当前已在候选图 index={answer_index}')
+        logger.info(f'🎯 当前已在候选图索引={answer_index}')
         return True
     if current < 0:
-        logger.warning('⚠️ 无法读取当前候选 index，按 index=0 估算点击步数')
+        logger.warning('⚠️ 无法读取当前候选图索引，按索引=0 估算点击步数')
         current = 0
 
     for attempt in range(3):
         if current == answer_index:
-            logger.info(f'🎯 候选图已切到 index={answer_index}')
+            logger.info(f'🎯 候选图已切到索引={answer_index}')
             return True
         forward = (answer_index - current) % 12
         backward = (current - answer_index) % 12
         direction = 'right' if forward <= backward else 'left'
         steps = forward if direction == 'right' else backward
-        logger.info(f'➡️ 切换候选图: current={current}, answer={answer_index}, {direction} x {steps}, attempt={attempt + 1}')
+        logger.info(f'➡️ 切换候选图：当前={current}，答案={answer_index}，{direction} × {steps}，尝试次数={attempt + 1}')
         for _ in range(steps):
             before = _get_current_candidate_index(page)
             if not _click_arrow(page, direction):
-                logger.warning(f'⚠️ 点击 {direction} arrow 失败')
+                logger.warning(f'⚠️ 点击 {direction} 箭头失败')
                 return False
             after = _wait_candidate_change(page, before, timeout=1.3)
             if after >= 0:
@@ -343,14 +343,14 @@ def _select_candidate(page, answer_index: int) -> bool:
         final = _get_current_candidate_index(page)
         if final >= 0:
             current = final
-            logger.info(f'🔎 候选图切换校验: current={current}, target={answer_index}')
+            logger.info(f'🔎 候选图切换校验：当前={current}，目标={answer_index}')
         else:
-            logger.warning('⚠️ 候选图切换后仍无法读取 index，按点击结果继续')
+            logger.warning('⚠️ 候选图切换后仍无法读取索引，按点击结果继续')
             return True
 
     ok = current == answer_index
     if not ok:
-        logger.warning(f'⚠️ 候选图最终 index 不一致: current={current}, target={answer_index}')
+        logger.warning(f'⚠️ 候选图最终索引不一致：当前={current}，目标={answer_index}')
     return ok
 
 
@@ -465,7 +465,7 @@ def _capture_debug_screenshot(page, filename: str) -> Optional[Path]:
         logger.info(f'📸 已保存调试截图: {path}')
         return path
     except Exception as e:
-        logger.debug(f'Debug screenshot failed ({filename}): {type(e).__name__}: {e}')
+        logger.debug(f'调试截图失败（{filename}）：{type(e).__name__}：{e}')
         return None
 
 
@@ -537,7 +537,7 @@ def _run_local_dice_solver(image_path: Path) -> Dict[str, Any]:
             result['runner'] = 'inprocess'
             return result
         except Exception as e:
-            logger.warning(f'Local dice in-process solver failed, fallback to subprocess: {type(e).__name__}: {e}')
+            logger.warning(f'进程内本地骰子求解失败，切换到子进程：{type(e).__name__}：{e}')
 
     cmd = [
         sys.executable,
@@ -571,13 +571,13 @@ def try_solve_dice_challenge(page, image_catcher) -> Optional[bool]:
     if not LOCAL_DICE_ENABLED:
         return None
     if image_catcher is None:
-        logger.info('ℹ️ 未启用 CDP image catcher，跳过本地骰子求解')
+        logger.info('ℹ️ 未启用 CDP 图片捕获器，跳过本地骰子求解')
         return None
     if click_submit_button is None or _click_in_frames is None:
         logger.warning('⚠️ captcha_image_collector helpers 不可用，跳过本地骰子求解')
         return None
     if not LOCAL_DICE_SOLVER.exists() or not LOCAL_DICE_WEIGHTS.exists():
-        logger.warning(f'⚠️ 本地骰子模型不存在: solver={LOCAL_DICE_SOLVER}, weights={LOCAL_DICE_WEIGHTS}')
+        logger.warning(f'⚠️ 本地骰子模型不存在：求解器={LOCAL_DICE_SOLVER}，权重={LOCAL_DICE_WEIGHTS}')
         return None
 
     seen_shas = set()
@@ -593,7 +593,7 @@ def try_solve_dice_challenge(page, image_catcher) -> Optional[bool]:
         )
         if not rec:
             state = _captcha_state(page)
-            logger.info(f'ℹ️ 未等到新验证码图片 wave={wave}, state={state}')
+            logger.info(f'ℹ️ 未等到新验证码图片，轮次={wave}，状态={state}')
             if interacted and state in ('success', 'gone'):
                 return True
             return None if not interacted else False
@@ -605,15 +605,15 @@ def try_solve_dice_challenge(page, image_catcher) -> Optional[bool]:
         url = rec.get('url') or ''
         url_kind = 'rtig' if '/rtig/image' in url.lower() else 'blob' if url.lower().startswith('blob:') else 'other'
         logger.info(
-            f'🖼️ 捕获验证码图片 wave={wave}: {img_path} '
+            f'🖼️ 捕获验证码图片，轮次={wave}：{img_path} '
             f'url_kind={url_kind}, size={rec_size}, mime={rec.get("mime")}, url={url[:160]}'
         )
 
         image_info = _classify_captcha_image(img_path)
         logger.info(
-            f'🔎 验证码图片分类 wave={wave}: kind={image_info.get("kind")}, '
-            f'size={image_info.get("width")}x{image_info.get("height")}, '
-            f'reason={image_info.get("reason")}'
+            f'🔎 验证码图片分类，轮次={wave}：类型={image_info.get("kind")}，'
+            f'尺寸={image_info.get("width")}x{image_info.get("height")}，'
+            f'原因={image_info.get("reason")}'
         )
         if image_info.get('kind') != 'dice':
             logger.info('ℹ️ 当前图片不是 2400x400 骰子长图，不调用 ONNX，交给 CapMonster')
@@ -633,7 +633,7 @@ def try_solve_dice_challenge(page, image_catcher) -> Optional[bool]:
         if status != 'unique_match' or answer is None:
             detail_path = CAPTCHA_SOLVE_DIR / f'dice_wave_{wave:02d}_failed.json'
             detail_path.write_text(json.dumps(result, ensure_ascii=False, indent=2, default=str), encoding='utf-8')
-            logger.warning(f'⚠️ 本地骰子未唯一命中，交给 CapMonster: {detail_path}')
+            logger.warning(f'⚠️ 本地骰子未唯一命中，交给 CapMonster：{detail_path}')
             return None if not interacted else False
 
         if not _select_candidate(page, int(answer)):
@@ -641,10 +641,10 @@ def try_solve_dice_challenge(page, image_catcher) -> Optional[bool]:
         time.sleep(0.25 + random.random() * 0.2)
         if not click_submit_button(page):
             state = _captcha_state(page)
-            logger.warning(f'⚠️ 未找到验证码提交按钮, state={state}')
+            logger.warning(f'⚠️ 未找到验证码提交按钮，状态={state}')
             return state in ('success', 'gone')
         interacted = True
-        logger.info(f'✅ 已提交骰子答案 index={answer}')
+        logger.info(f'✅ 已提交骰子答案索引={answer}')
         time.sleep(1.0 + random.random() * 0.5)
 
         state = _captcha_state(page)
@@ -655,7 +655,7 @@ def try_solve_dice_challenge(page, image_catcher) -> Optional[bool]:
             logger.warning('⚠️ 本地骰子答案被拒')
             return False
 
-    logger.warning(f'⚠️ 本地骰子达到最大轮数 {LOCAL_DICE_MAX_WAVES}')
+            logger.warning(f'⚠️ 本地骰子达到最大轮数：{LOCAL_DICE_MAX_WAVES}')
     return False
 
 
@@ -692,7 +692,7 @@ class CDPBlobCatcher:
         pfx = f'[{self._label}] ' if self._label else ''
         try:
             vi = _req.get(f'http://localhost:{self.debug_port}/json/version', timeout=5).json()
-            logger.info(f'{pfx}🌐 Browser: {vi.get("Browser", "?")}')
+            logger.info(f'{pfx}🌐 浏览器：{vi.get("Browser", "?")}')
         except Exception: pass
         try: self.ws = websocket.create_connection(ws_url, max_size=None, suppress_origin=True)
         except TypeError: self.ws = websocket.create_connection(ws_url, max_size=None, origin='chrome://devtools')
@@ -700,7 +700,7 @@ class CDPBlobCatcher:
         self._send('Target.setAutoAttach', {'autoAttach': True, 'waitForDebuggerOnStart': True, 'flatten': True})
         self._running = True; self._traffic_bytes = 0
         self._thread = threading.Thread(target=self._loop, daemon=True); self._thread.start()
-        logger.info(f'{pfx}🔌 CDP blob 抓取器已启动')
+        logger.info(f'{pfx}🔌 CDP blob 捕获器已启动')
 
     def _loop(self):
         while self._running:
@@ -866,11 +866,11 @@ class CapMonsterFunCaptchaSolver:
             r = self._session.post(CAPMONSTER_CREATE_TASK, json={'clientKey': self.config.api_key, 'task': task}, timeout=15)
             data = r.json()
             task_id = data.get('taskId')
-            if not task_id: logger.error(f'createTask 失败: {str(data)[:200]}'); return None
-            logger.info(f'📡 CapMonster taskId={task_id}')
+            if not task_id: logger.error(f'createTask 失败：{str(data)[:200]}'); return None
+            logger.info(f'📡 CapMonster 任务 ID={task_id}')
             return task_id
         except Exception as e:
-            logger.error(f'createTask 异常: {e}')
+            logger.error(f'createTask 异常：{e}')
             return None
 
     def _poll_task(self, task_id):
@@ -882,21 +882,21 @@ class CapMonsterFunCaptchaSolver:
                 r = self._session.post(CAPMONSTER_GET_RESULT, json={'clientKey': self.config.api_key, 'taskId': task_id}, timeout=10)
                 data = r.json()
             except Exception as e:
-                logger.warning(f'轮询异常: {e}')
+                logger.warning(f'轮询异常：{e}')
                 time.sleep(self.config.poll_interval)
                 continue
             status = data.get('status')
-            logger.info(f'🔄 轮询 #{pc}: status={status}')
+            logger.info(f'🔄 第 {pc} 次轮询：状态={status}')
             if status == 'ready':
                 token = data.get('solution', {}).get('token')
-                if token: logger.info(f'✅ 求解成功 (token 长度 {len(token)})'); return token
+                if token: logger.info(f'✅ 求解成功（token 长度 {len(token)}）'); return token
                 return None
             eid = data.get('errorId')
             if (eid not in (None, 0)) or status in ('error', 'failed'):
-                logger.error(f'❌ 求解失败: {str(data)[:200]}')
+                logger.error(f'❌ 求解失败：{str(data)[:200]}')
                 return None
             time.sleep(self.config.poll_interval)
-        logger.error(f'⏱️ 轮询超时 ({pc} 次)')
+        logger.error(f'⏱️ 轮询超时（{pc} 次）')
         return None
 
     def solve(self, page, blob=None):
@@ -979,17 +979,17 @@ class CapMonsterFunCaptchaSolver:
         never be passed to CapMonster.
         """
         if blob_catcher is None:
-            logger.error('Fresh blob retry requested but blob_catcher is not available')
+            logger.error('请求刷新 blob，但 blob 捕获器不可用')
             return None
 
         old_len = len(old_blob) if old_blob else 0
-        logger.warning(f'Refreshing page for CapMonster fallback with fresh Arkose blob (old_len={old_len})')
+        logger.warning(f'为 CapMonster 备用流程刷新页面并获取新的 Arkose blob（旧长度={old_len}）')
 
         try:
             blob_catcher.reset_blob()
-            logger.info('CDP blob catcher reset before reload; listener remains active')
+            logger.info('刷新前已重置 CDP blob 捕获器；监听器保持活动')
         except Exception as e:
-            logger.error(f'Failed to reset blob catcher before reload: {type(e).__name__}: {e}')
+            logger.error(f'刷新前重置 blob 捕获器失败：{type(e).__name__}：{e}')
             return None
 
         try:
@@ -997,9 +997,9 @@ class CapMonsterFunCaptchaSolver:
                 page.reload(wait_until='domcontentloaded', timeout=20000)
             except TypeError:
                 page.reload()
-            logger.info('Page reloaded; waiting for FunCaptcha to reappear')
+            logger.info('页面已刷新，等待 FunCaptcha 重新出现')
         except Exception as e:
-            logger.error(f'Page reload failed before fresh blob capture: {type(e).__name__}: {e}')
+            logger.error(f'获取新 blob 前刷新页面失败：{type(e).__name__}：{e}')
             return None
 
         detected = False
@@ -1008,14 +1008,14 @@ class CapMonsterFunCaptchaSolver:
             try:
                 info = self.detect(page)
                 if info.get('found'):
-                    logger.info(f'FunCaptcha re-detected after refresh (siteKey={info.get("siteKey")})')
+                    logger.info(f'刷新后重新检测到 FunCaptcha（siteKey={info.get("siteKey")}）')
                     detected = True
                     break
             except Exception as e:
-                logger.debug(f'Detect after refresh failed: {e}')
+                logger.debug(f'刷新后检测失败：{e}')
             time.sleep(0.5)
         if not detected:
-            logger.warning('FunCaptcha was not re-detected after refresh; still trying verify click/new blob wait')
+            logger.warning('刷新后未重新检测到 FunCaptcha；仍尝试点击验证并等待新 blob')
 
         clicked = False
         click_deadline = time.time() + click_timeout
@@ -1023,28 +1023,28 @@ class CapMonsterFunCaptchaSolver:
             try:
                 if self._click_arkose_verify_button(page):
                     clicked = True
-                    logger.info('Clicked Arkose verify button after refresh')
+                    logger.info('刷新后已点击 Arkose 验证按钮')
                     break
             except Exception as e:
-                logger.debug(f'Verify click after refresh failed: {e}')
+                logger.debug(f'刷新后点击验证按钮失败：{e}')
             time.sleep(1.0)
         if not clicked:
-            logger.warning('Verify button was not clicked after refresh; waiting for already-captured blob anyway')
+            logger.warning('刷新后未点击验证按钮；仍等待已经捕获的 blob')
 
         try:
             new_blob = blob_catcher.wait_for_blob(timeout=blob_timeout)
         except Exception as e:
-            logger.error(f'Fresh blob wait failed: {type(e).__name__}: {e}')
+            logger.error(f'等待新 blob 失败：{type(e).__name__}：{e}')
             return None
 
         if not new_blob:
-            logger.error('Fresh blob retry failed: no new blob captured after refresh')
+            logger.error('刷新后未捕获到新的 blob，重试失败')
             return None
         if old_blob and new_blob == old_blob:
-            logger.error('Fresh blob retry captured the same blob as the rejected session; refusing to reuse it')
+            logger.error('重试捕获到的 blob 与被拒绝会话相同，拒绝复用')
             return None
 
-        logger.info(f'Fresh Arkose blob captured for CapMonster fallback (new_len={len(new_blob)}, old_len={old_len})')
+        logger.info(f'已为 CapMonster 备用流程捕获新的 Arkose blob（新长度={len(new_blob)}，旧长度={old_len}）')
         return new_blob
 
     def inject_token(self, page, token):
@@ -1066,7 +1066,7 @@ class CapMonsterFunCaptchaSolver:
                     } catch(e) { return {ok:false, reason:'submit-error:'+e.message}; }
                 }
             ''', [token])
-            if result and result.get('ok'): logger.info(f'💉 token 注入成功: {result.get("method")}'); return True
+            if result and result.get('ok'): logger.info(f'💉 token 注入成功：{result.get("method")}'); return True
             logger.warning(f'注入失败: {result}')
         except Exception as e: logger.warning(f'注入异常: {e}')
         return False
@@ -1079,19 +1079,19 @@ class CapMonsterFunCaptchaSolver:
             pc += 1
             try:
                 result = self.detect(page)
-                if pc % 10 == 0: logger.info(f'🔄 已探测 {pc} 次, found={result.get("found")}')
+                if pc % 10 == 0: logger.info(f'🔄 已探测 {pc} 次，发现={result.get("found")}')
                 if result.get('found'):
                     detected = True
-                    logger.info(f'🎯 FunCaptcha 已检测到 (siteKey={result.get("siteKey")})')
+                    logger.info(f'🎯 已检测到 FunCaptcha（siteKey={result.get("siteKey")}）')
                     _capture_debug_screenshot(page, 'funcaptcha_detected.png')
                     break
-            except Exception as e: logger.warning(f'探测异常: {e}')
+            except Exception as e: logger.warning(f'探测异常：{e}')
             time.sleep(0.5)
-        if not detected: logger.warning('⏱️ 等待 FunCaptcha 超时 (正常)'); return True
+        if not detected: logger.warning('⏱️ 等待 FunCaptcha 超时（正常情况）'); return True
 
         blob_before = blob_catcher.captured_blob if blob_catcher else None
         if blob_before:
-            logger.info(f'📦 已有点击前 blob (长度 {len(blob_before)}), 跳过点击后 CDP 等待')
+            logger.info(f'📦 已有点击前 blob（长度 {len(blob_before)}），跳过点击后的 CDP 等待')
         elif blob_catcher:
             blob_catcher.reset_blob()
 
@@ -1103,7 +1103,7 @@ class CapMonsterFunCaptchaSolver:
             return False
 
         if not _try_click():
-            logger.warning('⚠️ 30s 未点到验证按钮, 刷新重试')
+            logger.warning('⚠️ 30 秒未点击验证按钮，刷新重试')
             page.reload(); time.sleep(5)
             if blob_catcher and not blob_before: blob_catcher.reset_blob()
             _try_click()
@@ -1111,37 +1111,37 @@ class CapMonsterFunCaptchaSolver:
 
         blob_new = None
         if blob_catcher is not None and not blob_before:
-            logger.info('⏳ 等待 CDP 抓取 blob (点击后)...')
+            logger.info('⏳ 等待 CDP 捕获 blob（点击后）...')
             blob_new = blob_catcher.wait_for_blob(timeout=15.0)
-            if blob_new: logger.info(f'📦 CDP 抓到点击后 blob (长度 {len(blob_new)})')
+            if blob_new: logger.info(f'📦 CDP 已捕获点击后的 blob（长度 {len(blob_new)}）')
 
         blob = blob_before or blob_new
         if blob:
-            logger.info(f'📦 使用 blob (长度 {len(blob)}, 来源: {"点击后" if blob_new else "点击前"})')
+            logger.info(f'📦 使用 blob（长度 {len(blob)}，来源：{"点击后" if blob_new else "点击前"}）')
         else:
-            logger.warning('⚠️ 无 blob (点击前后都没抓到)')
+            logger.warning('⚠️ 没有 blob（点击前后都未捕获）')
 
         capmonster_blob_refreshed = False
         if CAPMONSTER_FIRST and self.config.api_key:
-            logger.info('CAPMONSTER_FIRST enabled; skip local ONNX dice and use captured fresh blob first')
+            logger.info('CAPMONSTER_FIRST 已启用；跳过本地 ONNX 骰子，优先使用捕获的新 blob')
             local_dice = None
         else:
             local_dice = try_solve_dice_challenge(page, image_catcher)
         if local_dice is True:
-            logger.info('Local ONNX dice completed; checking parent page verdict')
+            logger.info('本地 ONNX 骰子求解完成，检查父页面结果')
             post_local = _wait_post_local_dice_result(page, timeout=20.0)
             if post_local is True:
-                logger.info('Registration success detected after local dice')
+                logger.info('本地骰子求解后检测到注册成功')
                 return True
             if post_local is None:
                 if not self.config.api_key or blob_catcher is None:
-                    logger.info('No rejection after local dice and no CapMonster/blob catcher fallback available; hand off to registration success wait')
+                    logger.info('本地骰子求解后未被拒绝，且没有 CapMonster/blob 捕获器备用流程；交给注册成功等待逻辑')
                     return True
-                logger.warning('No final success/reject after local dice; refreshing for CapMonster fallback')
+                logger.warning('本地骰子求解后没有最终成功或拒绝结果；刷新页面进入 CapMonster 备用流程')
             else:
-                logger.warning('Local dice did not produce usable parent token; trying CapMonster fallback')
+                logger.warning('本地骰子未产生可用的父页面 token；尝试 CapMonster 备用流程')
             if not self.config.api_key:
-                logger.error('No CAPMONSTER_API_KEY; cannot retry rejected local dice with CapMonster')
+                logger.error('没有 CAPMONSTER_API_KEY，无法使用 CapMonster 重试被拒绝的本地骰子结果')
                 return False
             fresh_blob = self._refresh_and_capture_fresh_blob_for_capmonster(
                 page,
@@ -1152,15 +1152,15 @@ class CapMonsterFunCaptchaSolver:
                 blob_timeout=20.0,
             )
             if not fresh_blob:
-                logger.error('Could not obtain a fresh blob after rejected local dice; aborting CapMonster fallback')
+                logger.error('本地骰子被拒后无法获取新的 blob，终止 CapMonster 备用流程')
                 return False
             blob = fresh_blob
             capmonster_blob_refreshed = True
             local_dice = False
         if local_dice is False:
-            logger.warning('Local ONNX dice failed/rejected; trying CapMonster fallback')
+            logger.warning('本地 ONNX 骰子失败或被拒绝，尝试 CapMonster 备用流程')
             if not self.config.api_key:
-                logger.error('No CAPMONSTER_API_KEY; cannot retry failed local dice with CapMonster')
+                logger.error('没有 CAPMONSTER_API_KEY，无法使用 CapMonster 重试失败的本地骰子结果')
                 return False
             if blob_catcher is not None and not capmonster_blob_refreshed:
                 fresh_blob = self._refresh_and_capture_fresh_blob_for_capmonster(
@@ -1172,34 +1172,34 @@ class CapMonsterFunCaptchaSolver:
                     blob_timeout=20.0,
                 )
                 if not fresh_blob:
-                    logger.error('Could not obtain a fresh blob after failed local dice; aborting CapMonster fallback')
+                    logger.error('本地骰子失败后无法获取新的 blob，终止 CapMonster 备用流程')
                     return False
                 blob = fresh_blob
         else:
-            logger.info('Non-dice challenge or local model unavailable; using CapMonster')
+            logger.info('当前不是骰子题或本地模型不可用，使用 CapMonster')
 
         if not self.config.api_key:
-            logger.error('No CAPMONSTER_API_KEY; cannot use CapMonster fallback')
+            logger.error('没有 CAPMONSTER_API_KEY，无法使用 CapMonster 备用流程')
             return False
 
         token = self.solve(page, blob=blob)
         if not token:
             if LOCAL_DICE_ENABLED and image_catcher is not None:
-                logger.warning('CapMonster failed; trying local ONNX dice fallback if current challenge is dice')
+                logger.warning('CapMonster 失败；如果当前是骰子题则尝试本地 ONNX 骰子备用流程')
                 local_after_capmonster = try_solve_dice_challenge(page, image_catcher)
                 if local_after_capmonster is True:
                     post_local = _wait_post_local_dice_result(page, timeout=20.0)
                     if post_local is True:
-                        logger.info('Registration success detected after CapMonster-failed local dice fallback')
+                        logger.info('CapMonster 失败后的本地骰子备用流程检测到注册成功')
                         return True
                     if post_local is None:
-                        logger.info('No rejection after CapMonster-failed local dice fallback; hand off to registration success wait')
+                        logger.info('CapMonster 失败后的本地骰子备用流程未被拒绝，交给注册成功等待逻辑')
                         return True
-                    logger.warning('Local dice fallback after CapMonster failure was rejected')
+                    logger.warning('CapMonster 失败后的本地骰子备用流程被拒绝')
                 elif local_after_capmonster is None:
-                    logger.warning('Local dice fallback skipped: current challenge is not dice or local solver unavailable')
+                    logger.warning('已跳过本地骰子备用流程：当前题目不是骰子题或本地求解器不可用')
                 else:
-                    logger.warning('Local dice fallback after CapMonster failure failed')
+                    logger.warning('CapMonster 失败后的本地骰子备用流程失败')
             return False
         ok = self.inject_token(page, token)
 
@@ -1276,7 +1276,7 @@ def register_one(acc):
                 logger.info(f'✅ {desc} 已就绪')
                 return page.locator(selector).first
             except Exception:
-                logger.warning(f'⚠️ {desc} 超时 (等{timeout}s), 硬刷新...')
+                logger.warning(f'⚠️ {desc} 超时（等待 {timeout} 秒），强制刷新...')
                 page.reload(); time.sleep(5)
                 page.wait_for_selector(selector, timeout=timeout * 1000)
                 logger.info(f'🔄 刷新后 {desc} 已出现')
@@ -1308,7 +1308,7 @@ def register_one(acc):
         logger.info('🔄 刷新页面确保完整加载...')
         page.reload(); time.sleep(3)
         _wait_or_refresh('#capture-country', '国家选择器(刷新后)')
-        logger.info(f'🌍 国家: {COUNTRY}')
+        logger.info(f'🌍 国家：{COUNTRY}')
         page.select_option('#capture-country', COUNTRY)
         time.sleep(1.5)
 
@@ -1368,7 +1368,7 @@ def register_one(acc):
             page.locator('#flow-form-submit-btn').click()
             time.sleep(2)
         else:
-            logger.error(f'❌ 邮箱不一致! {actual_email}')
+            logger.error(f'❌ 邮箱不一致！{actual_email}')
             page.screenshot(path='error_email.png')
             return False
 
@@ -1456,11 +1456,11 @@ def register_one(acc):
         logger.info('⏳ 等待注册成功...')
         try:
             if not _wait_registration_success(page, acc['email'], timeout=45.0):
-                raise TimeoutError('registration success page not detected')
+                raise TimeoutError('未检测到注册成功页面')
             logger.info('✅ 注册成功!')
             with open('registered_account.txt', 'a', encoding='utf-8') as f:
                 f.write(f'账号：{acc["email"]}\n密码：{acc["password"]}\n\n')
-            logger.info(f'💾 已保存: {acc["email"]}')
+            logger.info(f'💾 已保存：{acc["email"]}')
             page.screenshot(path='success.png')
             return True
         except Exception as e:
@@ -1470,7 +1470,7 @@ def register_one(acc):
             except Exception:
                 final_state = 'unknown'
                 sample = ''
-            logger.error(f'Registration success wait failed: {type(e).__name__}: {e}, captcha_state={final_state}, URL={page.url[:100]}, sample={sample}')
+            logger.error(f'等待注册成功失败：{type(e).__name__}：{e}，验证码状态={final_state}，URL={page.url[:100]}，页面样本={sample}')
             page.screenshot(path='error_timeout.png')
             return False
 
@@ -1499,7 +1499,7 @@ def main():
     acc = generate_identity()
     logger.info('=' * 50)
     logger.info('🚀 战网自动注册 — CloakBrowser 免费版 (直连)')
-    logger.info(f'   邮箱: {acc["email"]}')
+    logger.info(f'   邮箱：{acc["email"]}')
     logger.info(f'   BattleTag: {acc["battle_tag"]}')
     logger.info('=' * 50)
 

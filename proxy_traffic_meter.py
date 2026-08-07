@@ -31,16 +31,16 @@ class UpstreamProxy:
         parsed = urlsplit(str(value or "").strip())
         scheme = parsed.scheme.lower()
         if scheme not in {"http", "https", "socks5", "socks5h"}:
-            raise ValueError(f"unsupported metered proxy scheme: {scheme}")
+            raise ValueError(f"流量计不支持此代理协议：{scheme}")
         host = parsed.hostname or ""
         if not host:
-            raise ValueError("metered proxy host is empty")
+            raise ValueError("计量代理主机为空")
         if parsed.port is None:
-            raise ValueError("metered proxy port is required")
+            raise ValueError("计量代理必须提供端口")
         username = unquote(parsed.username) if parsed.username is not None else None
         password = unquote(parsed.password) if parsed.password is not None else None
         if (username is None) != (password is None):
-            raise ValueError("metered proxy username and password must be paired")
+            raise ValueError("计量代理用户名和密码必须成对提供")
         return cls(scheme, host, int(parsed.port), username, password)
 
     @property
@@ -291,14 +291,14 @@ def _read_until_header(sock: socket.socket) -> bytes:
             break
         data.extend(chunk)
         if len(data) > MAX_HEADER_BYTES:
-            raise ValueError("proxy request header exceeds limit")
+            raise ValueError("代理请求头超过限制")
     return bytes(data)
 
 
 def _split_header(data: bytes) -> tuple[bytes, bytes]:
     marker = data.find(b"\r\n\r\n")
     if marker < 0:
-        raise ValueError("incomplete proxy request header")
+        raise ValueError("代理请求头不完整")
     marker += 4
     return data[:marker], data[marker:]
 
@@ -307,7 +307,7 @@ def _request_line(header: bytes) -> tuple[str, str, str]:
     line = header.split(b"\r\n", 1)[0].decode("latin-1", errors="replace")
     parts = line.split(" ", 2)
     if len(parts) != 3:
-        raise ValueError(f"invalid proxy request line: {line!r}")
+        raise ValueError(f"无效代理请求行：{line!r}")
     return parts[0].upper(), parts[1], parts[2]
 
 
@@ -341,7 +341,7 @@ def _origin_form_request(data: bytes) -> tuple[bytes, str, int]:
                 host, port = _split_host_port(host_value, 80)
                 break
     if not host:
-        raise ValueError("plain HTTP proxy request has no target host")
+        raise ValueError("普通 HTTP 代理请求没有目标主机")
     cleaned = [lines[0].split(b" ", 1)[0] + b" " + path.encode("latin-1") + b" " + version.encode("ascii")]
     cleaned.extend(
         line
@@ -356,7 +356,7 @@ def _split_host_port(value: str, default_port: int) -> tuple[str, int]:
     if text.startswith("["):
         end = text.find("]")
         if end < 0:
-            raise ValueError(f"invalid IPv6 target: {text!r}")
+            raise ValueError(f"无效 IPv6 目标：{text!r}")
         host = text[1:end]
         tail = text[end + 1 :]
         return host, int(tail[1:]) if tail.startswith(":") else default_port
@@ -526,7 +526,7 @@ class ProxyTrafficMeter:
             username = (self.upstream.username or "").encode("utf-8")
             password = (self.upstream.password or "").encode("utf-8")
             if len(username) > 255 or len(password) > 255:
-                raise ValueError("SOCKS5 credentials exceed 255 bytes")
+                raise ValueError("SOCKS5 凭证超过 255 字节")
             self._send_upstream(
                 sock,
                 b"\x01" + bytes([len(username)]) + username + bytes([len(password)]) + password,
@@ -543,7 +543,7 @@ class ProxyTrafficMeter:
         except ValueError:
             encoded = target_host.encode("idna")
             if len(encoded) > 255:
-                raise ValueError("SOCKS5 target hostname exceeds 255 bytes")
+                raise ValueError("SOCKS5 目标主机名超过 255 字节")
             address_field = b"\x03" + bytes([len(encoded)]) + encoded
         else:
             address_field = (b"\x01" if address.version == 4 else b"\x04") + address.packed
@@ -576,7 +576,7 @@ class ProxyTrafficMeter:
                 break
             data.extend(chunk)
             if len(data) > MAX_HEADER_BYTES:
-                raise ValueError("upstream proxy response header exceeds limit")
+                raise ValueError("上游代理响应头超过限制")
         return bytes(data)
 
     def _tunnel(

@@ -164,7 +164,7 @@ jobs:
 
       - name: 检查 Python 依赖
         run: |
-          .venv/bin/python -c "import email_verify_ruyipage_v3; print('email verifier dependencies ready')"
+          .venv/bin/python -c "import email_verify_ruyipage_v3; print('邮箱验证器依赖已就绪')"
 
   verify:
     name: 验证账号 ${{ matrix.index }}

@@ -167,7 +167,7 @@ class RuyiArkoseImageCatcher:
         self._subscription_id = ret.get("subscription")
         self._driver.set_callback("network.responseCompleted", self._on_response, context=None)
         self._driver.set_callback("network.fetchError", self._on_fetch_error, context=None)
-        LOG.info("[%s] RuyiPage image capture started collector=%s", self.label, bool(self._collector_id))
+        LOG.info("[%s] RuyiPage 图片捕获已启动，收集器=%s", self.label, bool(self._collector_id))
 
     def stop(self) -> None:
         from ruyipage._bidi import network as bidi_network
@@ -188,7 +188,7 @@ class RuyiArkoseImageCatcher:
         req = params.get("request", {}) or {}
         url = req.get("url", "") or ""
         if "arkoselabs" in url or "/rtig/image" in url:
-            LOG.debug("[%s] image fetchError: %s", self.label, url[:180])
+            LOG.debug("[%s] 图片获取错误：%s", self.label, url[:180])
 
     def _on_response(self, params: Dict[str, Any]) -> None:
         req = params.get("request", {}) or {}
@@ -214,7 +214,7 @@ class RuyiArkoseImageCatcher:
                     "body_bytes": None,
                 }
             )
-        LOG.info("[%s] saw image idx=%s status=%s mime=%s url=%s", self.label, idx, status, mime, url[:160])
+        LOG.info("[%s] 发现图片，序号=%s 状态=%s MIME=%s URL=%s", self.label, idx, status, mime, url[:160])
         self._collect_body(rid, idx)
 
     @staticmethod
@@ -238,7 +238,7 @@ class RuyiArkoseImageCatcher:
             with self._lock:
                 if 0 <= idx < len(self.captured_images):
                     self.captured_images[idx]["body_error"] = f"{type(exc).__name__}: {exc}"
-            LOG.debug("[%s] get image body failed idx=%s: %s", self.label, idx, exc)
+            LOG.debug("[%s] 获取图片正文失败，序号=%s：%s", self.label, idx, exc)
             return
         if not data:
             return
@@ -252,7 +252,7 @@ class RuyiArkoseImageCatcher:
                 rec["sha256"] = sha
                 rec["size"] = size
         self._event.set()
-        LOG.info("[%s] captured image body idx=%s bytes=%s sha256=%s size=%s", self.label, idx, len(data), sha[:12], size)
+        LOG.info("[%s] 已捕获图片正文，序号=%s 字节数=%s sha256=%s 尺寸=%s", self.label, idx, len(data), sha[:12], size)
 
     def wait_new_challenge(self, seen: set[str], timeout: float, stop_page: Any = None) -> Optional[dict]:
         deadline = time.time() + timeout
@@ -275,7 +275,7 @@ class RuyiArkoseImageCatcher:
                     # Arkose PC challenge strip 常见 2000x400/2400x400；放宽一点，避免误伤新尺寸。
                     if not (w >= 1200 and 300 <= h <= 650):
                         seen.add(sha)
-                        LOG.info("[%s] ignore non-challenge image size=%sx%s url=%s", self.label, w, h, (rec.get("url") or "")[:120])
+                        LOG.info("[%s] 忽略非题目图片，尺寸=%sx%s URL=%s", self.label, w, h, (rec.get("url") or "")[:120])
                         continue
                 return rec
             self._event.wait(0.5)
@@ -323,7 +323,7 @@ def yescaptcha_classify_image(image_path: Path, question: str, api_key: str, api
             "question": question,
         },
     }
-    LOG.info("YesCaptcha classify: image=%s bytes=%s question=%r", image_path.name, len(data), question)
+    LOG.info("YesCaptcha 分类：图片=%s 字节数=%s 问题=%r", image_path.name, len(data), question)
     resp = requests.post(api_url, json=payload, timeout=timeout)
     try:
         result = resp.json()
@@ -332,12 +332,12 @@ def yescaptcha_classify_image(image_path: Path, question: str, api_key: str, api
         raise
     base.write_json(response_path, result)
     if result.get("errorId") != 0 or result.get("status") != "ready":
-        raise RuntimeError(f"YesCaptcha failed: errorId={result.get('errorId')} errorCode={result.get('errorCode')} status={result.get('status')}")
+        raise RuntimeError(f"YesCaptcha 失败：errorId={result.get('errorId')} errorCode={result.get('errorCode')} 状态={result.get('status')}")
     objects = ((result.get("solution") or {}).get("objects") or [])
     if not objects:
-        raise RuntimeError(f"YesCaptcha response has no solution.objects: {result}")
+        raise RuntimeError(f"YesCaptcha 响应中没有 solution.objects：{result}")
     answer = int(objects[0])
-    LOG.info("YesCaptcha answer objects[0]=%s labels=%s", answer, (result.get("solution") or {}).get("labels"))
+    LOG.info("YesCaptcha 答案 objects[0]=%s 标签=%s", answer, (result.get("solution") or {}).get("labels"))
     return answer
 
 
@@ -510,8 +510,8 @@ def build_token_result(page: Any, token: str, actions: list[dict]) -> dict:
     state = solver_state(page)
     completed_payload = state.get("completedPayload")
     metadata = arkose_token_metadata(token)
-    LOG.info("Arkose completedPayload: %s", completed_payload)
-    LOG.info("Arkose token metadata (opaque segment redacted): %s", metadata)
+    LOG.info("Arkose 完成载荷：%s", completed_payload)
+    LOG.info("Arkose token 元数据（不透明字段已隐藏）：%s", metadata)
     return {
         "ok": True,
         "token": token,
@@ -558,7 +558,7 @@ class RuyiCaptchaGateCatcher:
         self._driver.set_callback("network.beforeRequestSent", self._on_request, context=None)
         self._driver.set_callback("network.responseCompleted", self._on_response, context=None)
         self._driver.set_callback("network.fetchError", self._on_fetch_error, context=None)
-        LOG.info("Battle.net captcha-gate capture started collector=%s", bool(self._collector_id))
+        LOG.info("Battle.net captcha-gate 捕获已启动，收集器=%s", bool(self._collector_id))
 
     def stop(self) -> None:
         from ruyipage._bidi import network as bidi_network
@@ -606,7 +606,7 @@ class RuyiCaptchaGateCatcher:
         with self._lock:
             rec["method"] = req.get("method")
             rec["request"] = captcha_gate_request_metadata(body)
-        LOG.info("captcha-gate request: method=%s metadata=%s", rec.get("method"), rec.get("request"))
+        LOG.info("captcha-gate 请求：方法=%s 元数据=%s", rec.get("method"), rec.get("request"))
 
     def _on_response(self, params: Dict[str, Any]) -> None:
         req = params.get("request", {}) or {}
@@ -634,7 +634,7 @@ class RuyiCaptchaGateCatcher:
             }
         self._event.set()
         LOG.info(
-            "captcha-gate response: status=%s bodyLength=%s sample=%r",
+            "captcha-gate 响应：状态=%s 正文长度=%s 样本=%r",
             rec["response"]["status"],
             rec["response"]["bodyLength"],
             sample[:300],
@@ -649,7 +649,7 @@ class RuyiCaptchaGateCatcher:
             with self._lock:
                 rec["fetchError"] = str(params.get("errorText") or params.get("error") or "fetchError")
             self._event.set()
-            LOG.warning("captcha-gate fetchError: %s", rec["fetchError"])
+            LOG.warning("captcha-gate 获取错误：%s", rec["fetchError"])
 
     def wait(self, timeout: float = 3.0) -> list[dict]:
         self._event.wait(max(0.0, timeout))
@@ -666,13 +666,13 @@ def wait_token_quick(page, timeout: float, prefix: str = "") -> Optional[str]:
     while time.time() < deadline:
         st = solver_state(page)
         if st.get("status") != last_status:
-            LOG.info("%sSolver status: %s tokenLength=%s", prefix, st.get("status"), st.get("tokenLength") or 0)
+            LOG.info("%s求解器状态：%s token 长度=%s", prefix, st.get("status"), st.get("tokenLength") or 0)
             last_status = st.get("status")
         completed_payload = st.get("completedPayload")
         rejection_reason = completion_rejection_reason(completed_payload)
         if rejection_reason:
             LOG.warning(
-                "%sArkose onCompleted returned a rejected completion: %s payload=%s",
+                "%sArkose onCompleted 返回了被拒绝的完成结果：%s 载荷=%s",
                 prefix,
                 rejection_reason,
                 completed_payload,
@@ -773,10 +773,10 @@ def native_click_at(ctx: Any, x: int, y: int, desc: str) -> bool:
                 ],
             },
         )
-        LOG.info("Native %s click %s at (%s,%s) move=%sms hold=%sms", CLICK_STYLE, desc, int(x), int(y), move_ms, hold_ms)
+        LOG.info("原生 %s 点击 %s，坐标=(%s,%s) 移动=%s 毫秒 按住=%s 毫秒", CLICK_STYLE, desc, int(x), int(y), move_ms, hold_ms)
         return True
     except Exception as exc:
-        LOG.debug("native fast click failed for %s: %s: %s", desc, type(exc).__name__, exc)
+        LOG.debug("原生快速点击 %s 失败：%s：%s", desc, type(exc).__name__, exc)
         return False
 
 
@@ -856,10 +856,10 @@ def native_human_click_at(ctx: Any, x: int, y: int, desc: str) -> bool:
             ctx.actions.curr_x = tx
             ctx.actions.curr_y = ty
             ctx.actions._pointer_position_known = True
-        LOG.info("Native human click %s at (%s,%s) total=%sms steps=%s", desc, tx, ty, total_ms, steps)
+        LOG.info("原生拟人点击 %s，坐标=(%s,%s) 总耗时=%s 毫秒 步数=%s", desc, tx, ty, total_ms, steps)
         return True
     except Exception as exc:
-        LOG.debug("custom human click failed for %s: %s: %s", desc, type(exc).__name__, exc)
+        LOG.debug("自定义拟人点击 %s 失败：%s：%s", desc, type(exc).__name__, exc)
         return False
 
 
@@ -871,13 +871,13 @@ def native_human_click_element(ctx: Any, ele: Any, desc: str) -> bool:
             if pos and native_human_click_at(ctx, int(pos["x"]), int(pos["y"]), f"{desc} marker={_element_marker(ele)[:80]}"):
                 return True
         except Exception as exc:
-            LOG.debug("human_click failed for %s: %s: %s", desc, type(exc).__name__, exc)
+            LOG.debug("human_click 点击 %s 失败：%s：%s", desc, type(exc).__name__, exc)
     try:
         ele.click()
-        LOG.info("Native fast element click %s: %s", desc, _element_marker(ele)[:120])
+        LOG.info("原生快速元素点击 %s：%s", desc, _element_marker(ele)[:120])
         return True
     except Exception as exc:
-        LOG.debug("native element click failed for %s: %s: %s", desc, type(exc).__name__, exc)
+        LOG.debug("原生元素点击 %s 失败：%s：%s", desc, type(exc).__name__, exc)
     return False
 
 
@@ -1056,7 +1056,7 @@ def click_arrow(page, direction: str, timeout: float = 6.0) -> bool:
         if native_click_selectors(page, selectors, f"{direction} arrow", accept_re=accept_re):
             return True
         if run_js_first(page, CLICK_ARROW_JS, direction, timeout=2.5):
-            LOG.warning("Fallback JS click used for %s arrow; this may lower Arkose trust", direction)
+            LOG.warning("%s 箭头已使用备用 JS 点击；这可能降低 Arkose 信任度", direction)
             return True
         time.sleep(0.25)
     return False
@@ -1073,10 +1073,10 @@ def click_next_n(page, count: int) -> bool:
                 return False
             after = wait_index_change(page, before)
             if before < 0 or after != before:
-                LOG.info("Next click %s/%s ok: before=%s after=%s", i + 1, count, before, after)
+                LOG.info("下一张点击 %s/%s 成功：点击前=%s 点击后=%s", i + 1, count, before, after)
                 ok = True
                 break
-            LOG.warning("Next click %s/%s 可能被忽略，retry=%s before=%s after=%s", i + 1, count, attempt + 1, before, after)
+            LOG.warning("下一张点击 %s/%s 可能被忽略，重试=%s 点击前=%s 点击后=%s", i + 1, count, attempt + 1, before, after)
         if not ok:
             return False
         time.sleep(click_gap())
@@ -1104,7 +1104,7 @@ def click_submit(page, timeout: float = 6.0) -> bool:
             return True
         ret = run_js_first(page, CLICK_SUBMIT_JS, timeout=2.5)
         if ret:
-            LOG.warning("Fallback JS click used for Arkose Submit: %s", ret)
+            LOG.warning("Arkose 提交已使用备用 JS 点击：%s", ret)
             return True
         time.sleep(0.35)
     return False
@@ -1135,9 +1135,9 @@ def ensure_verify_or_image(page, catcher: RuyiArkoseImageCatcher, timeout: float
             if not clicked:
                 clicked = base.click_arkose_verify(page, timeout=2.0)
                 if clicked:
-                    LOG.warning("Fallback JS click used for Arkose Verify")
+                    LOG.warning("Arkose 验证已使用备用 JS 点击")
             if clicked:
-                LOG.info("Clicked solver Arkose Verify")
+                LOG.info("已点击求解标签中的 Arkose 验证按钮")
             last_click = time.time()
         time.sleep(0.4)
     return False
@@ -1212,7 +1212,7 @@ def auto_solve_solver_tab(solver_tab: Any, catcher: RuyiArkoseImageCatcher, args
             response_path=images_dir / f"yescaptcha_wave_{wave:02d}_response.json",
         )
         if not click_next_n(solver_tab, answer):
-            return {"ok": False, "error": f"failed to click next {answer} times at wave={wave}", "actions": actions}
+            return {"ok": False, "error": f"点击下一张按钮失败 {answer} 次，轮次={wave}", "actions": actions}
 
         time.sleep(0.08 + random.random() * 0.08)
         submit_ok = click_submit(solver_tab)
@@ -1222,7 +1222,7 @@ def auto_solve_solver_tab(solver_tab: Any, catcher: RuyiArkoseImageCatcher, args
         if args.debug_screenshots:
             base.screenshot(solver_tab, out / "solver_screenshots" / f"wave_{wave:02d}_after_submit.png")
         if not submit_ok:
-            return {"ok": False, "error": f"submit button failed at wave={wave}, state={base.captcha_state(solver_tab)}", "actions": actions}
+            return {"ok": False, "error": f"提交按钮失败，轮次={wave}，状态={base.captcha_state(solver_tab)}", "actions": actions}
 
         token = wait_token_quick(solver_tab, args.after_submit_token_wait, f"wave{wave} post ")
         if token:
@@ -1235,7 +1235,7 @@ def auto_solve_solver_tab(solver_tab: Any, catcher: RuyiArkoseImageCatcher, args
 
 
 def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="RuyiPage same-browser + YesCaptcha FunCaptchaClassification auto register experiment.")
+    ap = argparse.ArgumentParser(description="RuyiPage 同浏览器 + YesCaptcha FunCaptchaClassification 自动注册实验。")
     ap.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_ROOT))
     ap.add_argument("--headless", action="store_true")
     ap.add_argument("--keep-open", action="store_true")
@@ -1301,13 +1301,13 @@ def main() -> int:
         proxy_info = proxy_route.start()
         proxy_url = proxy_info.get("proxyURL")
     else:
-        LOG.info("Network mode 1: use local default network/system proxy")
+        LOG.info("网络模式 1：使用本机默认网络或系统代理")
 
     LOG.info("输出目录: %s", out.resolve())
-    LOG.info("架构: 原注册标签 -> 同浏览器求解标签 -> YesCaptcha 分类解图 -> token 注入")
+    LOG.info("架构：原注册标签 -> 同浏览器求解标签 -> YesCaptcha 分类解图 -> token 注入")
     LOG.info("YesCaptcha question: %r", args.question)
     LOG.info(
-        "Click style: %s, human_move=%s-%sms, debug_screenshots=%s, after_submit_token_wait=%.1fs",
+        "点击方式：%s，拟人移动=%s-%s 毫秒，调试截图=%s，提交后等待 token=%.1f 秒",
         args.click_style,
         HUMAN_MOVE_MIN_MS,
         HUMAN_MOVE_MAX_MS,
@@ -1326,11 +1326,11 @@ def main() -> int:
         _ = resolve_yescaptcha_key(args)
         acc = generate_identity()
         base.write_json(out / "account_generated.json", acc)
-        LOG.info("账号: %s", acc["email"])
-        LOG.info("BattleTag: %s", acc["battle_tag"])
+        LOG.info("账号：%s", acc["email"])
+        LOG.info("战网昵称：%s", acc["battle_tag"])
 
         page = base.launch_ruyi_browser(args, proxy_url)
-        LOG.info("RuyiPage version=%s, UA=%s", getattr(ruyipage, "__version__", "?"), page.user_agent)
+        LOG.info("RuyiPage 版本=%s，UA=%s", getattr(ruyipage, "__version__", "?"), page.user_agent)
         if not args.skip_egress_check:
             base.verify_browser_egress(page, out, proxy_url)
 
@@ -1338,14 +1338,14 @@ def main() -> int:
         blob_catcher = base.RuyiArkoseCatcher(page)
         blob_catcher.start()
 
-        LOG.info("Submit BattleTag to trigger FunCaptcha")
+        LOG.info("提交战网昵称以触发 FunCaptcha")
         base.click_ele(page, "#flow-form-submit-btn", "BattleTag submit")
         time.sleep(2)
         base.screenshot(page, out / "original_screenshots" / "after_battletag_submit.png")
 
         blob = blob_catcher.wait_for_blob(timeout=min(15.0, args.blob_timeout))
         if args.click_original_verify or not blob:
-            LOG.info("Click original Arkose Verify%s", " (forced)" if args.click_original_verify else " because blob was not captured yet")
+            LOG.info("点击原注册页的 Arkose 验证按钮%s", "（强制）" if args.click_original_verify else "，因为尚未捕获 blob")
             clicked = base.click_arkose_verify(page, timeout=25)
             base.write_json(out / "original_verify_click.json", {"clicked": clicked, "forced": bool(args.click_original_verify)})
             time.sleep(1.5)
@@ -1354,11 +1354,11 @@ def main() -> int:
                 blob = blob_catcher.wait_for_blob(timeout=args.blob_timeout)
         blob = blob or blob_catcher.captured_blob
         if not blob:
-            raise RuntimeError("no Arkose blob captured from original tab through RuyiPage capture")
+            raise RuntimeError("未通过 RuyiPage 从原注册标签捕获到 Arkose blob")
 
         ctx = base.detect_arkose_context(page, blob_catcher)
         if not ctx.get("siteKey"):
-            raise RuntimeError("Arkose public key not detected")
+            raise RuntimeError("未检测到 Arkose 公钥")
         ca_records = list(blob_catcher.ca_requests or [])
         with contextlib.suppress(Exception):
             blob_catcher.stop()
@@ -1377,7 +1377,7 @@ def main() -> int:
                 "question": args.question,
             },
         )
-        LOG.info("Captured Arkose context: pk=%s, surl=%s, blob_len=%s", ctx.get("siteKey"), ctx.get("surl"), len(blob))
+        LOG.info("已捕获 Arkose 上下文：pk=%s，surl=%s，blob 长度=%s", ctx.get("siteKey"), ctx.get("surl"), len(blob))
 
         solver_tab = page.new_tab(background=False)
         img_catcher = RuyiArkoseImageCatcher(page)
@@ -1392,9 +1392,9 @@ def main() -> int:
         solve_result = auto_solve_solver_tab(solver_tab, img_catcher, args, out)
         base.write_json(out / "yescaptcha_solver_result.json", {k: v for k, v in solve_result.items() if k != "token"})
         if not solve_result.get("ok"):
-            raise TimeoutError(solve_result.get("error") or "YesCaptcha solver tab did not return token")
+            raise TimeoutError(solve_result.get("error") or "YesCaptcha 求解标签未返回 token")
         token = str(solve_result["token"])
-        LOG.info("Solver tab returned onCompleted token, length=%s", len(token))
+        LOG.info("求解标签已通过 onCompleted 返回 token，长度=%s", len(token))
 
         image_records = [{k: v for k, v in r.items() if k != "body_bytes"} for r in img_catcher.captured_images]
         base.write_json(out / "captured_image_records.json", image_records)
@@ -1407,11 +1407,11 @@ def main() -> int:
             gate_catcher.start()
         except Exception as exc:
             gate_catcher = None
-            LOG.warning("captcha-gate capture start failed: %s: %s", type(exc).__name__, exc)
+            LOG.warning("captcha-gate 捕获启动失败：%s：%s", type(exc).__name__, exc)
 
         inject_result = base.inject_token_to_original(page, token)
         base.write_json(out / "token_injection_result.json", inject_result)
-        LOG.info("Original tab token injection result: %s", inject_result)
+        LOG.info("原注册标签 token 注入结果：%s", inject_result)
         base.screenshot(page, out / "original_screenshots" / "after_token_injection.png")
 
         gate_records = gate_catcher.wait(timeout=min(8.0, args.success_timeout)) if gate_catcher else []
@@ -1420,7 +1420,7 @@ def main() -> int:
         if gate_outcome:
             success = True
             success_source = "captcha-gate-response"
-            LOG.info("captcha-gate confirmed create-success: %s", gate_outcome)
+            LOG.info("captcha-gate 已确认注册成功：%s", gate_outcome)
         else:
             success = base.wait_registration_success(page, acc["email"], timeout=args.success_timeout)
             success_source = "page-dom" if success else None
@@ -1470,7 +1470,7 @@ def main() -> int:
         base.write_json(out / "summary.json", {"ok": False, "error": "KeyboardInterrupt", "outputDir": str(out.resolve())})
         return 130
     except Exception as exc:
-        LOG.error("Run failed: %s: %s", type(exc).__name__, exc, exc_info=True)
+        LOG.error("运行失败：%s：%s", type(exc).__name__, exc, exc_info=True)
         failure_summary = {"ok": False, "error": f"{type(exc).__name__}: {exc}", "outputDir": str(out.resolve())}
         if isinstance(exc, ArkoseCompletionRejected):
             failure_summary["completedPayload"] = exc.payload

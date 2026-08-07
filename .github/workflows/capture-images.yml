@@ -1,14 +1,14 @@
-﻿name: FunCaptcha image capture dataset
+﻿name: FunCaptcha 题图采集数据集
 
 on:
   workflow_dispatch:
     inputs:
       count:
-        description: "parallel capture count (1-256)"
+        description: "并行采集数量（1-256）"
         required: false
         default: "32"
       max_submits:
-        description: "random submit clicks per captcha"
+        description: "每个验证码的随机提交次数"
         required: false
         default: "12"
 
@@ -22,7 +22,7 @@ jobs:
     outputs:
       indices: ${{ steps.gen.outputs.indices }}
     steps:
-      - name: Generate matrix
+      - name: 生成任务矩阵
         id: gen
         run: |
           N=${{ github.event.inputs.count }}
@@ -30,7 +30,7 @@ jobs:
           if [ "$N" -gt 256 ]; then N=256; fi
           indices=$(python3 -ESs -c 'import json,sys; n=int(sys.argv[1]); print(json.dumps(list(range(1, n+1))))' "$N")
           echo "indices=$indices" >> $GITHUB_OUTPUT
-          echo "matrix size: $N"
+          echo "任务矩阵数量：$N"
 
   capture:
     needs: prepare
@@ -43,27 +43,27 @@ jobs:
         index: ${{ fromJson(needs.prepare.outputs.indices) }}
 
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v5
 
-      - name: Cache CloakBrowser binary
+      - name: 缓存 CloakBrowser 程序
         uses: actions/cache@v5
         with:
           path: ~/.cloakbrowser
           key: cloakbrowser-${{ runner.os }}-v1
 
-      - name: Cache pip
+      - name: 缓存 pip
         uses: actions/cache@v5
         with:
           path: ~/.cache/pip
           key: pip-${{ runner.os }}-v4
 
-      - name: Install dependencies
+      - name: 安装依赖
         run: |
           pip install cloakbrowser websocket-client requests
           python -m cloakbrowser install
 
-      - name: Capture FunCaptcha images
+      - name: 采集 FunCaptcha 题图
         env:
           PYTHONUNBUFFERED: "1"
           MATRIX_INDEX: "${{ matrix.index }}"
@@ -71,7 +71,7 @@ jobs:
           CAPTCHA_OUTPUT_DIR: "captcha_images"
         run: python register_capture_images.py
 
-      - name: Stage wanted captcha jpg only
+      - name: 整理需要的验证码 JPG
         if: always()
         run: |
           mkdir -p artifact_captcha_jpg
@@ -81,10 +81,10 @@ jobs:
             cp "$f" "artifact_captcha_jpg/run_${{ matrix.index }}_$(basename "$f")"
             count=$((count + 1))
           done
-          echo "wanted captcha jpg count: $count"
+          echo "需要的验证码 JPG 数量：$count"
           find artifact_captcha_jpg -type f -name 'captcha*.jpg' -o -name 'run_*_captcha*.jpg' | sort || true
 
-      - name: Upload per-run captcha jpg only
+      - name: 上传本次运行的验证码 JPG
         if: always()
         uses: actions/upload-artifact@v6
         with:
@@ -97,14 +97,14 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Download captcha jpg artifacts
+      - name: 下载验证码 JPG 构件
         uses: actions/download-artifact@v7
         with:
           pattern: captcha-jpg-*
           path: all_captcha_jpg_artifacts
           merge-multiple: false
 
-      - name: Repack wanted jpg dataset only
+      - name: 重新打包验证码 JPG 数据集
         run: |
           mkdir -p filtered_captcha_jpg
           count=0
@@ -114,10 +114,10 @@ jobs:
             cp "$f" "filtered_captcha_jpg/${parent}_${base}"
             count=$((count + 1))
           done < <(find all_captcha_jpg_artifacts -type f -name '*.jpg' | sort)
-          echo "final captcha jpg count: $count"
+          echo "最终验证码 JPG 数量：$count"
           zip -r all-captcha-jpg-dataset.zip filtered_captcha_jpg || true
 
-      - name: Upload combined jpg dataset
+      - name: 上传合并后的 JPG 数据集
         uses: actions/upload-artifact@v6
         with:
           name: all-captcha-jpg-dataset

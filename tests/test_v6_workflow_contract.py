@@ -17,7 +17,7 @@ def test_v6_workflow_uses_v6_pool_runner_and_output_contract() -> None:
 
     assert 'EMAIL_POOL_FILE: "Email_registing_v6.txt"' in text
     assert "from v6_email_pool import validate_pool_capacity" in text
-    assert "register_ruyipage_v6.py" in text
+    assert "workflow_runner.py register-v6" in text
     assert "V6_EMAIL_POOL_FILE: Email_registing_v6.txt" in text
     assert "from v6_email_pool import remove_consumed_emails" in text
     assert 'Path("Email_registing_v6.txt")' in text

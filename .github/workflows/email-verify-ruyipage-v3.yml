@@ -164,7 +164,7 @@ jobs:
 
       - name: 检查 Python 依赖
         run: |
-          .venv/bin/python -c "import email_verify_ruyipage_v3; print('邮箱验证器依赖已就绪')"
+          .venv/bin/python -c "import workflow_runner; import email_verify_ruyipage_v3; print('邮箱验证器依赖已就绪')"
 
   verify:
     name: 验证账号 ${{ matrix.index }}
@@ -229,7 +229,7 @@ jobs:
         run: |
           set -euo pipefail
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
-            .venv/bin/python email_verify_ruyipage_v3.py \
+            .venv/bin/python workflow_runner.py email-verify \
               --accounts oath2_account.v3.txt \
               --account-index "$ACCOUNT_INDEX" \
               --max-parallel 1 \

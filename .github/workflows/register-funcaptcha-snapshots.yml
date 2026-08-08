@@ -106,6 +106,7 @@ jobs:
           missing = [name for name in required if importlib.util.find_spec(name) is None]
           if missing:
               raise SystemExit(f"missing modules: {missing}")
+          import workflow_runner
           import register_ruyipage_v4
           print("RuyiPage 快照依赖检查通过")
           PY
@@ -178,7 +179,7 @@ jobs:
             .venv/bin/python -m ruyipage install
             .venv/bin/python -m ruyipage doctor
           fi
-          .venv/bin/python -m py_compile funcaptcha_http_snapshots.py
+          .venv/bin/python workflow_runner.py check funcaptcha_http_snapshots
 
       - name: 确保 Xvfb 可用
         run: |
@@ -201,7 +202,7 @@ jobs:
             echo "::add-mask::$REGISTRATION_PROXY"
           fi
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
-            .venv/bin/python funcaptcha_http_snapshots.py \
+            .venv/bin/python workflow_runner.py funcaptcha-snapshots \
               --proxy "$REGISTRATION_PROXY" \
               --max-waves 16 \
               --capture-image-timeout "${CAPTCHA_IMAGE_WAIT:-75}"

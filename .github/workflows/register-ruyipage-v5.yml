@@ -120,6 +120,7 @@ jobs:
           import os
           from pathlib import Path
 
+          import workflow_runner
           from v5_proxy_pool import load_proxy_pool
           from v5_email_pool import validate_pool_capacity
 
@@ -296,6 +297,7 @@ jobs:
           missing = [name for name in required if importlib.util.find_spec(name) is None]
           if missing:
               raise SystemExit(f"缺少模块: {missing}")
+          import workflow_runner
           import register_ruyipage_v5
           print("V5 依赖校验通过")
           PY
@@ -438,7 +440,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$NETWORK_MODE" = "proxy" ]; then
-            .venv/bin/python v5_proxy_pool.py \
+            .venv/bin/python workflow_runner.py proxy-pool \
               --file "$PROXY_FILE" \
               --index "$JOB_INDEX" \
               --job-count "$JOB_COUNT" \
@@ -516,7 +518,7 @@ jobs:
           for attempt in 1 2 3; do
             echo "::group::V5 注册尝试 ${attempt}/3"
             xvfb-run -a --server-args="-screen 0 1920x1080x24" \
-              .venv/bin/python register_ruyipage_v5.py \
+              .venv/bin/python workflow_runner.py register-v5 \
                 --solver "$V5_SOLVER" \
                 --capmonster-proxy-mode "$V5_CAPMONSTER_PROXY_MODE" \
                 --browser "$V5_BROWSER" \
@@ -563,6 +565,7 @@ jobs:
           .venv/bin/python - <<'PY'
           import os
           from pathlib import Path
+          import workflow_runner
           from v5_email_verifier import sanitize_cached_profile
 
           cache_dir = Path(os.environ["V5_EMAIL_BROWSER_CACHE_DIR"])
@@ -713,6 +716,7 @@ jobs:
           import json
           from pathlib import Path
 
+          import workflow_runner
           from v5_email_pool import remove_consumed_emails
 
           success_path = Path("successful_emails.txt")

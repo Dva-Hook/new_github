@@ -100,7 +100,7 @@ Run one registration on Linux:
 
 ```bash
 xvfb-run -a --server-args="-screen 0 1920x1080x24" \
-  .venv/bin/python register_ruyipage_v4.py \
+  .venv/bin/python workflow_runner.py register-v4 \
     --proxy "" \
     --rank-v11-url http://127.0.0.1:8765 \
     --click-style balanced
@@ -111,7 +111,7 @@ Use `--proxy "HOST:PORT:USER:PASSWORD"` to enable a proxy.
 Resume an interrupted protocol session with the same route:
 
 ```bash
-.venv/bin/python register_ruyipage_v4.py \
+.venv/bin/python workflow_runner.py register-v4 \
   --resume ruyipage_http_v11_register/runs/run_TIMESTAMP \
   --proxy "HOST:PORT:USER:PASSWORD" \
   --rank-v11-url http://127.0.0.1:8765

@@ -69,7 +69,7 @@ jobs:
           MATRIX_INDEX: "${{ matrix.index }}"
           CAPTCHA_RANDOM_SUBMITS: "${{ github.event.inputs.max_submits }}"
           CAPTCHA_OUTPUT_DIR: "captcha_images"
-        run: python register_capture_images.py
+        run: python workflow_runner.py capture-images
 
       - name: 整理需要的验证码 JPG
         if: always()

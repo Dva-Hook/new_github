@@ -1,0 +1,21 @@
+{
+  "archiveDate": "2026-08-08",
+  "sourceRoot": "D:/Project/GitHub_Project/new_github",
+  "archiveRoot": "backup/legacy_registration_workflows_20260808",
+  "files": [
+    {"path": "workflows/register.yml", "source": ".github/workflows/register.yml", "action": "moved", "sha256": "d2e309af5ba463c4937b8804ff1a9b8bcbae1703af2d64cb74ba568eda381713"},
+    {"path": "workflows/register-ruyipage.yml", "source": ".github/workflows/register-ruyipage.yml", "action": "moved", "sha256": "a9a6b2dabda40d8ad7ed33e21f8f789baa499513f0196c01815e3791674b0838"},
+    {"path": "workflows/register-ruyipage-v2.yml", "source": ".github/workflows/register-ruyipage-v2.yml", "action": "moved", "sha256": "24f6ce0701074ffdb31ce6f358b009f7ca204b233b85ec03be9b6b7314fec481"},
+    {"path": "workflows/register-ruyipage-v3.yml", "source": ".github/workflows/register-ruyipage-v3.yml", "action": "moved", "sha256": "aad8514a695f5b70c321d069f629d3e9935184b2d9747a6b73f39b0f6f70f606"},
+    {"path": "workflows/register-ruyipage-v4.yml", "source": ".github/workflows/register-ruyipage-v4.yml", "action": "moved", "sha256": "41e0205e371209f9e535bb0769f960aa280fef97125cb2bafada5a146d253291"},
+    {"path": "scripts/register.py", "source": "register.py", "action": "copied-shared-snapshot", "sha256": "789e6fd06ff7ddafbedb964bf2449914b21421bf87cf6ff47d7e854ee0ef96d8"},
+    {"path": "scripts/register_ruyipage.py", "source": "register_ruyipage.py", "action": "moved-dedicated", "sha256": "18fd2487abb22a2c249f83b61177ff8bc6490f2041d834e405d7daaf5eb2485f"},
+    {"path": "scripts/register_ruyipage_v2.py", "source": "register_ruyipage_v2.py", "action": "moved-dedicated", "sha256": "7b4a8a6c78cb425ef24a066e05b110f17aec1b5ac8b1c936c93b78f54df215d5"},
+    {"path": "scripts/register_ruyipage_v3.py", "source": "register_ruyipage_v3.py", "action": "copied-shared-snapshot", "sha256": "5ff60ebf803305407abe0e9fa5b10ab2b47fe1168c001e8a992b942197ce71c0"},
+    {"path": "scripts/register_ruyipage_v4.py", "source": "register_ruyipage_v4.py", "action": "copied-shared-snapshot", "sha256": "94433361ae46351591804a0e6088fc18e30c4ac3e9ac56f91d9ee1f8262b0655"},
+    {"path": "requirements/requirements.txt", "source": "requirements.txt", "action": "copied-shared-snapshot", "sha256": "01cc0e8424b69028fa8fb8eb03c47d96a51a3629bc9d3003c3b20180df831e25"},
+    {"path": "requirements/requirements-ruyipage.txt", "source": "requirements-ruyipage.txt", "action": "moved-dedicated", "sha256": "b283d8ebf13e24e6d17be20f1cead1dc90da62d05e22b19993e20e4311c8e96a"},
+    {"path": "requirements/requirements-ruyipage-v3.txt", "source": "requirements-ruyipage-v3.txt", "action": "moved-dedicated", "sha256": "7b426882f1474ba50b7e7dd3a06b0d82abc8a776ba89933096b41f4ef778e318"},
+    {"path": "requirements/requirements-ruyipage-v4.txt", "source": "requirements-ruyipage-v4.txt", "action": "copied-shared-snapshot", "sha256": "d8aab33fc97305057b90eb82c293be48203e28455d7d0a79ebcce73a756a60f2"}
+  ]
+}

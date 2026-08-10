@@ -14,7 +14,7 @@ V5_WORKFLOW = ROOT / ".github" / "workflows" / "register-ruyipage-v5.yml"
 
 
 @pytest.mark.parametrize("workflow_path", [V5_WORKFLOW, WORKFLOW])
-def test_registration_workflows_default_to_capmonster_with_proxy(
+def test_registration_workflows_default_to_yescaptcha_direct(
     workflow_path: Path,
 ) -> None:
     workflow = yaml.load(
@@ -23,8 +23,8 @@ def test_registration_workflows_default_to_capmonster_with_proxy(
     )
     inputs = workflow["on"]["workflow_dispatch"]["inputs"]
 
-    assert inputs["solver"]["default"] == "CapMonster"
-    assert inputs["network"]["default"] == "代理"
+    assert inputs["solver"]["default"] == "YesCaptcha"
+    assert inputs["network"]["default"] == "直连"
 
 
 def test_v6_workflow_uses_v6_pool_runner_and_output_contract() -> None:

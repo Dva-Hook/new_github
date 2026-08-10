@@ -21,7 +21,7 @@ on:
       solver:
         description: "验证码求解方式"
         required: true
-        default: "CapMonster"
+        default: "YesCaptcha"
         type: choice
         options:
           - "本地 V11"
@@ -56,7 +56,7 @@ on:
       network:
         description: "注册网络线路"
         required: true
-        default: "代理"
+        default: "直连"
         type: choice
         options:
           - "直连"

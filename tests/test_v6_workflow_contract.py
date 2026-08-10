@@ -10,6 +10,21 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "register-ruyipage-v6.yml"
+V5_WORKFLOW = ROOT / ".github" / "workflows" / "register-ruyipage-v5.yml"
+
+
+@pytest.mark.parametrize("workflow_path", [V5_WORKFLOW, WORKFLOW])
+def test_registration_workflows_default_to_capmonster_with_proxy(
+    workflow_path: Path,
+) -> None:
+    workflow = yaml.load(
+        workflow_path.read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+    inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+
+    assert inputs["solver"]["default"] == "CapMonster"
+    assert inputs["network"]["default"] == "代理"
 
 
 def test_v6_workflow_uses_v6_pool_runner_and_output_contract() -> None:

@@ -779,7 +779,11 @@ class BattleProtocolClient:
             if not 200 <= int(response.status_code) < 400:
                 raise RuntimeError(f"登录/账号名提交失败：HTTP {response.status_code}")
             form = parse_flow_form(response.text, str(response.url))
-        if form.step not in {"initial-tou-agreement", "get-started"}:
+        if form.step not in {
+            "initial-tou-agreement",
+            "row-redirect-to-tassadar",
+            "get-started",
+        }:
             outcome = classify_registration_response(
                 response.text,
                 self.state.data["identity"].get("email", ""),

@@ -176,6 +176,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--click-interval-min-ms", type=int, default=250)
     parser.add_argument("--click-interval-max-ms", type=int, default=600)
     parser.add_argument(
+        "--click-gap-min-ms",
+        type=int,
+        default=int(os.environ.get("V5_CLICK_GAP_MIN_MS", "180")),
+        help="V11 balanced 模式相邻箭头点击的最短等待毫秒数",
+    )
+    parser.add_argument(
+        "--click-gap-max-ms",
+        type=int,
+        default=int(os.environ.get("V5_CLICK_GAP_MAX_MS", "400")),
+        help="V11 balanced 模式相邻箭头点击的最长等待毫秒数",
+    )
+    parser.add_argument(
         "--capmonster-key",
         default=os.environ.get("CAPMONSTER_API_KEY", ""),
     )
@@ -585,6 +597,14 @@ def click_next_n_v4(page: Any, count: int, args: argparse.Namespace) -> bool:
     minimum = max(0, int(args.click_interval_min_ms))
     maximum = max(minimum, int(args.click_interval_max_ms))
     for index in range(count):
+        delay = random.randint(minimum, maximum) / 1000.0
+        LOG.info(
+            "等待 %s 毫秒后点击第 %s/%s 张箭头",
+            round(delay * 1000),
+            index + 1,
+            count,
+        )
+        time.sleep(delay)
         clicked = False
         for attempt in range(3):
             before = v4.v3.current_index(page)
@@ -612,10 +632,6 @@ def click_next_n_v4(page: Any, count: int, args: argparse.Namespace) -> bool:
             )
         if not clicked:
             return False
-        if index + 1 < count:
-            delay = random.randint(minimum, maximum) / 1000.0
-            LOG.info("等待 %s 毫秒后点击下一张箭头", round(delay * 1000))
-            time.sleep(delay)
     return True
 
 

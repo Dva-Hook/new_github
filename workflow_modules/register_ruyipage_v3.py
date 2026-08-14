@@ -62,6 +62,8 @@ FAST_POINTER_MOVE_MS = 20
 FAST_CLICK_HOLD_MS = 35
 HUMAN_MOVE_MIN_MS = 1000
 HUMAN_MOVE_MAX_MS = 2000
+CLICK_GAP_MIN_MS = 180
+CLICK_GAP_MAX_MS = 400
 
 
 class ArkoseCompletionRejected(RuntimeError):
@@ -1078,7 +1080,9 @@ def click_gap() -> float:
     if CLICK_STYLE == "fast":
         return 0.03 + random.random() * 0.04
     if CLICK_STYLE == "balanced":
-        return 0.18 + random.random() * 0.22
+        minimum = max(0, int(CLICK_GAP_MIN_MS))
+        maximum = max(minimum, int(CLICK_GAP_MAX_MS))
+        return random.randint(minimum, maximum) / 1000.0
     if CLICK_STYLE == "human":
         return 0.25 + random.random() * 0.45
     return 0.12 + random.random() * 0.18
@@ -1120,6 +1124,9 @@ def click_next_n(page, count: int) -> bool:
     count = max(0, int(count))
     LOG.info("按本地 V11 answer_index 点击下一张图按钮 %s 次", count)
     for i in range(count):
+        delay = click_gap()
+        LOG.info("等待 %s 毫秒后点击第 %s/%s 张箭头", round(delay * 1000), i + 1, count)
+        time.sleep(delay)
         ok = False
         for attempt in range(3):
             before = current_index(page)
@@ -1133,7 +1140,6 @@ def click_next_n(page, count: int) -> bool:
             LOG.warning("下一张点击 %s/%s 可能被忽略，重试=%s 点击前=%s 点击后=%s", i + 1, count, attempt + 1, before, after)
         if not ok:
             return False
-        time.sleep(click_gap())
     return True
 
 

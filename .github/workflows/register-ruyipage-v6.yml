@@ -520,13 +520,15 @@ jobs:
           mkdir -p "$V6_STATIC_CACHE_DIR" "$V6_EMAIL_BROWSER_CACHE_DIR"
           solver_click_args=(
             --click-style balanced
+            --click-gap-min-ms 1800
+            --click-gap-max-ms 3000
             --verify-timeout 35
             --first-image-timeout 45
           )
           if [ "$V6_SOLVER" = "yescaptcha" ]; then
             solver_click_args+=(
-              --click-interval-min-ms 250
-              --click-interval-max-ms 600
+              --click-interval-min-ms 1800
+              --click-interval-max-ms 3000
             )
           fi
           last_rc=1
@@ -544,7 +546,6 @@ jobs:
                 --verify-email "$V6_VERIFY_EMAIL" \
                 --proxy "$REGISTRATION_PROXY" \
                 --country-probe \
-                --headless \
                 "${solver_click_args[@]}" \
                 --static-cache-dir "$V6_STATIC_CACHE_DIR" \
                 --email-browser-cache-dir "$V6_EMAIL_BROWSER_CACHE_DIR" \

@@ -708,6 +708,13 @@ def configure_v3_clicks(args: argparse.Namespace) -> None:
     v3.HUMAN_MOVE_MAX_MS = max(
         v3.HUMAN_MOVE_MIN_MS, int(args.human_move_max_ms)
     )
+    v3.CLICK_GAP_MIN_MS = max(
+        0, int(getattr(args, "click_gap_min_ms", v3.CLICK_GAP_MIN_MS))
+    )
+    v3.CLICK_GAP_MAX_MS = max(
+        v3.CLICK_GAP_MIN_MS,
+        int(getattr(args, "click_gap_max_ms", v3.CLICK_GAP_MAX_MS)),
+    )
 
 
 def wait_rank_v11_service(base_url: str, timeout: float) -> dict[str, Any]:

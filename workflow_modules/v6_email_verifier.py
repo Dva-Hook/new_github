@@ -870,7 +870,11 @@ def verify_registered_email(
             )
         return EmailVerificationResult(True, "verified", "", scanned, matching)
     except Exception as exc:
-        LOG.warning("V6 注册邮箱自动验证失败：%s", type(exc).__name__)
+        LOG.warning(
+            "V6 注册邮箱自动验证失败：%s: %s",
+            type(exc).__name__,
+            exc,
+        )
         return EmailVerificationResult(
             False,
             "verification_error",

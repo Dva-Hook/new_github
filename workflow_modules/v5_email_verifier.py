@@ -460,7 +460,7 @@ def wait_element(page: Any, selector: str, timeout: float) -> Any:
                 if element:
                     return element
         time.sleep(0.25)
-        raise TimeoutError(f"等待元素超时：{selector}")
+    raise TimeoutError(f"等待元素超时：{selector}")
 
 
 def click_element(page: Any, selector: str, timeout: float = 30.0) -> None:

@@ -77,6 +77,34 @@ def test_email_verification_browser_rejects_non_english_locale() -> None:
         v5.configure_email_browser_english(Page())
 
 
+def test_wait_element_retries_until_slow_login_field_appears(monkeypatch) -> None:
+    clock = [0.0]
+    expected = object()
+
+    class Page:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get_all_frames(self):
+            return []
+
+        def ele(self, selector, timeout=0):
+            assert selector == "#accountName"
+            self.calls += 1
+            return expected if self.calls == 3 else None
+
+    page = Page()
+    monkeypatch.setattr(v5.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        v5.time,
+        "sleep",
+        lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+    )
+
+    assert v5.wait_element(page, "#accountName", timeout=2.0) is expected
+    assert page.calls == 3
+
+
 def test_verifier_stops_when_overview_already_says_email_verified(
     monkeypatch, tmp_path: Path
 ) -> None:

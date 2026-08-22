@@ -62,6 +62,44 @@ def test_v6_workflow_supports_optional_email_verification() -> None:
     assert "needs.prepare.outputs.verify_email == 'yes'" in text
 
 
+def test_v6_workflow_repairs_or_rebuilds_invalid_venv_cache() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    deps_steps = workflow["jobs"]["deps-cache"]["steps"]
+    build_step = next(
+        step for step in deps_steps if step.get("name") == "构建 V6 虚拟环境"
+    )
+    cache_step = next(
+        step for step in deps_steps if step.get("name") == "缓存 V6 虚拟环境"
+    )
+
+    assert "v6-" in cache_step["with"]["key"]
+    check_step = next(
+        step
+        for step in deps_steps
+        if step.get("name") == "校验 V6 虚拟环境缓存"
+    )
+    assert check_step["continue-on-error"] is True
+    assert "if [ ! -x .venv/bin/python ]" in check_step["run"]
+    assert "importlib.util.find_spec" in check_step["run"]
+    assert "steps.venv-check.outcome != 'success'" in build_step["if"]
+    assert "requirements-ruyipage-v5.txt" in build_step["run"]
+
+    register_steps = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"][
+        "register"
+    ]["steps"]
+    register_check = next(
+        step for step in register_steps if step.get("name") == "校验 V6 虚拟环境"
+    )
+    repair_step = next(
+        step for step in register_steps if step.get("name") == "修复缺失的缓存依赖"
+    )
+    assert register_check["continue-on-error"] is True
+    assert "importlib.util.find_spec" in register_check["run"]
+    assert "steps.venv-check.outcome != 'success'" in repair_step["if"]
+    assert repair_step["env"]["V6_VENV_CHECK"] == "${{ steps.venv-check.outcome }}"
+    assert 'rm -rf .venv' in repair_step["run"]
+
+
 def test_v6_workflow_quarantines_login_form_without_retrying() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
 

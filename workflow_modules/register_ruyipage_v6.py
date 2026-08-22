@@ -107,11 +107,15 @@ def _verify_registered_email_v6(
 
 
 def _is_already_registered_bootstrap_error(exc: BaseException) -> bool:
-    """Recognize the server returning the sign-in form for a supplied address."""
+    """Recognize localized bootstrap login-form responses for a supplied address."""
     message = str(exc)
     return bool(
-        "bootstrap ended on unexpected form" in message
-        and re.search(r"form\s+['\"]login['\"]", message, flags=re.IGNORECASE)
+        re.search(
+            r"(?:bootstrap ended on unexpected form|引导流程结束在意外表单)"
+            r"\s+['\"]login['\"]",
+            message,
+            flags=re.IGNORECASE,
+        )
     )
 
 

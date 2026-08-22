@@ -80,11 +80,16 @@ def test_verification_bridge_can_skip_browser_verification(monkeypatch) -> None:
     assert result.status == "skipped"
 
 
-def test_login_form_bootstrap_is_terminal_exit_43(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "message",
+    [
+        "bootstrap ended on unexpected form 'login': Welcome back mail@example.com",
+        "引导流程结束在意外表单 'login'：Battle.net Login Welcome back mail@example.com",
+    ],
+)
+def test_login_form_bootstrap_is_terminal_exit_43(monkeypatch, message) -> None:
     def fail(*args, **kwargs):
-        raise RuntimeError(
-            "bootstrap ended on unexpected form 'login': Welcome back mail@example.com"
-        )
+        raise RuntimeError(message)
 
     monkeypatch.setattr(v6, "_V5_RUN_TO_CAPTCHA", fail)
     client = SimpleNamespace(

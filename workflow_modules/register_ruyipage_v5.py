@@ -434,6 +434,105 @@ def solve_with_capmonster(
     )
 
 
+def diagnose_captcha_submission_context(
+    client: BattleProtocolClient,
+    context: Mapping[str, Any],
+    token: str,
+) -> dict[str, Any]:
+    """Validate local Arkose/token invariants without persisting secrets."""
+
+    def host(value: Any) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        parsed = urlsplit(raw if "://" in raw else f"https://{raw}")
+        return str(parsed.hostname or "").lower()
+
+    context_blob = str(context.get("blob") or "")
+    site_key = str(context.get("siteKey") or "")
+    surl = str(context.get("surl") or "")
+    website_url = str(context.get("websiteURL") or "")
+    token_value = str(token or "")
+    entry_url = str(getattr(client, "entry_url", "") or "")
+    entry_host = host(entry_url)
+    form = getattr(client, "form", None)
+    form_action = str(getattr(form, "action", "") or "") if form else ""
+    form_step = str(getattr(form, "step", "") or "") if form else ""
+    form_csrf = str(getattr(form, "csrf", "") or "") if form else ""
+
+    state = getattr(getattr(client, "state", None), "data", {}) or {}
+    state_arkose = state.get("arkose") if isinstance(state, Mapping) else {}
+    if not isinstance(state_arkose, Mapping):
+        state_arkose = {}
+    state_blob = str(state_arkose.get("blob") or "")
+    state_site_key = str(state_arkose.get("siteKey") or "")
+    state_surl = str(state_arkose.get("surl") or "")
+    state_website_url = str(state_arkose.get("websiteURL") or "")
+    state_status = (
+        str(state.get("status") or "") if isinstance(state, Mapping) else ""
+    )
+
+    checks = {
+        "token_present": bool(token_value),
+        "token_has_no_outer_whitespace": bool(token_value)
+        and token_value == token_value.strip(),
+        "blob_present": bool(context_blob),
+        "blob_minimum_length": len(context_blob) >= 80,
+        "site_key_present": bool(site_key),
+        "surl_present": bool(surl),
+        "website_url_host_matches_entry": bool(entry_host)
+        and host(website_url) == entry_host,
+        "form_present": form is not None,
+        "form_step_is_captcha_gate": form_step == "captcha-gate",
+        "form_action_host_matches_entry": bool(entry_host)
+        and host(form_action) == entry_host,
+        "csrf_present": bool(form_csrf),
+        "state_status_compatible": state_status in {"captcha-gate", "token-ready"},
+        "state_blob_matches": bool(state_blob) and state_blob == context_blob,
+        "state_site_key_matches": bool(state_site_key)
+        and state_site_key == site_key,
+        "state_surl_matches": bool(state_surl) and state_surl == surl,
+        "state_website_url_matches": bool(state_website_url)
+        and state_website_url == website_url,
+    }
+    issues = [name for name, passed in checks.items() if not passed]
+    fingerprint_material = "\x1f".join(
+        (context_blob, site_key, surl, website_url, form_action, form_csrf)
+    )
+    return {
+        "version": 1,
+        "ok": not issues,
+        "issues": issues,
+        "checks": checks,
+        "entryURLHost": entry_host,
+        "websiteURLHost": host(website_url),
+        "formAction": form_action,
+        "formStep": form_step,
+        "formControlNames": sorted(
+            {
+                str(control.name)
+                for control in (getattr(form, "controls", ()) if form else ())
+                if str(control.name or "")
+            }
+        ),
+        "formControlCount": len(getattr(form, "controls", ()) if form else ()),
+        "stateStatus": state_status,
+        "siteKey": site_key,
+        "surl": surl,
+        "blobLength": len(context_blob),
+        "blobSha256": hashlib.sha256(context_blob.encode("utf-8")).hexdigest()
+        if context_blob
+        else "",
+        "tokenLength": len(token_value),
+        "tokenSha256": hashlib.sha256(token_value.encode("utf-8")).hexdigest()
+        if token_value
+        else "",
+        "contextFingerprint": hashlib.sha256(
+            fingerprint_material.encode("utf-8")
+        ).hexdigest(),
+    }
+
+
 def _install_cloak_resource_filter(page: Any, enabled: bool) -> None:
     if not enabled:
         return
@@ -1005,6 +1104,7 @@ def main() -> int:
     traffic_meter: Optional[ProxyTrafficMeter] = None
     traffic_snapshots: dict[str, dict[str, Any]] = {}
     runtime_proxy_url: Optional[str] = None
+    submission_diagnosis: Optional[dict[str, Any]] = None
     registration_started_at = datetime.now(timezone.utc)
     started = time.perf_counter()
     try:
@@ -1130,6 +1230,11 @@ def main() -> int:
         arkose = dict(state.data.get("arkose") or {})
         if not arkose.get("blob"):
             arkose = client.recover_arkose_from_last_response()
+        arkose["siteKey"] = str(arkose.get("siteKey") or v4.DEFAULT_SITE_KEY)
+        arkose["surl"] = str(arkose.get("surl") or v4.DEFAULT_SURL)
+        arkose["websiteURL"] = str(
+            arkose.get("websiteURL") or args.entry_url
+        )
         traffic_snapshots["captchaGate"] = v4.capture_proxy_traffic_snapshot(
             traffic_meter
         )
@@ -1196,8 +1301,64 @@ def main() -> int:
             traffic_meter
         )
 
+        submission_diagnosis = diagnose_captcha_submission_context(
+            client,
+            arkose,
+            token,
+        )
+        write_json(
+            out / "captcha_submission_diagnosis.json",
+            submission_diagnosis,
+        )
+        LOG.info(
+            "提交前上下文诊断：ok=%s，blob_sha256=%s，token_sha256=%s，问题=%s",
+            submission_diagnosis["ok"],
+            submission_diagnosis["blobSha256"][:12],
+            submission_diagnosis["tokenSha256"][:12],
+            ",".join(submission_diagnosis["issues"]) or "无",
+        )
+        if not submission_diagnosis["ok"]:
+            raise RuntimeError(
+                "Arkose 提交上下文诊断失败："
+                + ",".join(submission_diagnosis["issues"])
+            )
+
         outcome = client.submit_captcha(token)
         success = outcome.get("status") == "success" and bool(outcome.get("success"))
+        submission_diagnosis["outcome"] = {
+            key: outcome.get(key)
+            for key in (
+                "status",
+                "success",
+                "httpStatus",
+                "stepId",
+                "hasExpectedEmail",
+                "hasSuccessIcon",
+                "hasAllSet",
+                "hasCreated",
+                "hasDownloadApp",
+            )
+            if key in outcome
+        }
+        submission_diagnosis["assessment"] = (
+            "accepted"
+            if success
+            else (
+                "server_rejected_after_local_context_pass"
+                if outcome.get("status") == "rejected"
+                else "submission_not_confirmed"
+            )
+        )
+        write_json(
+            out / "captcha_submission_diagnosis.json",
+            submission_diagnosis,
+        )
+        LOG.info(
+            "提交后上下文诊断：assessment=%s，服务端状态=%s，HTTP=%s",
+            submission_diagnosis["assessment"],
+            outcome.get("status"),
+            outcome.get("httpStatus"),
+        )
         email_verification = EmailVerificationResult(
             ok=False,
             status="not_requested",
@@ -1230,6 +1391,7 @@ def main() -> int:
             "emailVerification": email_verification.to_dict(),
             "successSource": "persistent-http-captcha-gate" if success else None,
             "outcome": outcome,
+            "captchaSubmissionDiagnosis": submission_diagnosis,
         }
         write_json(out / "registration_result.json", registration)
         write_json(
@@ -1262,6 +1424,7 @@ def main() -> int:
                 "solverActions": solve_result.get("actions") or [],
                 "browserTraffic": solve_result.get("browserTraffic") or {},
                 "registration": registration,
+                "captchaSubmissionDiagnosis": submission_diagnosis,
                 "elapsedSeconds": time.perf_counter() - started,
             },
         )
@@ -1320,6 +1483,8 @@ def main() -> int:
         browser_traffic = v4.read_json_object(out / "browser_traffic.json")
         if browser_traffic:
             failure["browserTraffic"] = browser_traffic
+        if submission_diagnosis is not None:
+            failure["captchaSubmissionDiagnosis"] = submission_diagnosis
         write_json(out / "summary.json", failure)
         return (
             v4.v3.UNSUPPORTED_CAPTCHA_EXIT_CODE

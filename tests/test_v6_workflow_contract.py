@@ -110,6 +110,22 @@ def test_v6_workflow_quarantines_login_form_without_retrying() -> None:
     assert 'success_path = Path("pool_removal_emails.txt")' in text
 
 
+def test_v6_workflow_stops_deterministic_server_rejection_without_retrying() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+
+    assert 'if [ "$last_rc" -eq 44 ]; then' in text
+    assert "服务端已明确拒绝当前提交" in text
+
+
+def test_v6_workflow_uses_short_solver_arrow_wait() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+
+    assert "--click-gap-min-ms 400" in text
+    assert "--click-gap-max-ms 800" in text
+    assert "--click-interval-min-ms 400" in text
+    assert "--click-interval-max-ms 800" in text
+
+
 def test_v6_workflow_uploads_pending_email_accounts_only_when_present() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     register_steps = workflow["jobs"]["register"]["steps"]

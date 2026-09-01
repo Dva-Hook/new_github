@@ -92,3 +92,82 @@ def test_submission_diagnosis_rejects_non_captcha_form_or_missing_csrf() -> None
     assert set(("form_step_is_captcha_gate", "csrf_present")) <= set(
         result["issues"]
     )
+
+
+def test_diagnostic_trace_redacts_secret_fields(tmp_path) -> None:
+    token = "token-secret"
+    blob = "blob-secret"
+    cookie = "cookie-secret"
+
+    v5._diagnostic_event(
+        tmp_path,
+        "unit_test",
+        0.0,
+        token=token,
+        blob=blob,
+        cookie=cookie,
+        proxyPassword="proxy-secret",
+        tokenLength=len(token),
+        tokenSha256=v5._diagnostic_digest(token),
+    )
+
+    trace = (tmp_path / "diagnostic_trace.jsonl").read_text(encoding="utf-8")
+    record = json.loads(trace)
+    assert record["token"] == "<redacted>"
+    assert record["blob"] == "<redacted>"
+    assert record["cookie"] == "<redacted>"
+    assert record["proxyPassword"] == "<redacted>"
+    assert record["tokenLength"] == len(token)
+    assert record["tokenSha256"] == v5._diagnostic_digest(token)
+    assert token not in trace
+    assert blob not in trace
+    assert cookie not in trace
+    assert "proxy-secret" not in trace
+
+
+def test_protocol_history_keeps_only_transition_metadata() -> None:
+    client = SimpleNamespace(
+        state=SimpleNamespace(
+            data={
+                "history": [
+                    {
+                        "at": "2026-09-01T00:00:00+00:00",
+                        "completed": "provide-name",
+                        "next": "provide-credentials",
+                        "httpStatus": 200,
+                        "responseSha256": "a" * 64,
+                        "cookie": "must-not-be-exported",
+                    }
+                ]
+            }
+        )
+    )
+
+    history = v5._protocol_history(client)
+
+    assert history == [
+        {
+            "transitionIndex": 1,
+            "stateEventAt": "2026-09-01T00:00:00+00:00",
+            "completed": "provide-name",
+            "failed": "",
+            "nextStep": "provide-credentials",
+            "returnedStep": "",
+            "classification": "",
+            "httpStatus": 200,
+            "responseSha256": "a" * 16,
+        }
+    ]
+
+
+def test_server_response_signals_classify_humanity_rejection_without_text() -> None:
+    result = v5._server_response_signals(
+        {
+            "sample": "Detecting Humanity Only humans are allowed to create accounts.",
+            "errors": ["Value is invalid"],
+        }
+    )
+
+    assert result["labels"] == ["humanity_only", "value_invalid"]
+    assert result["errorCount"] == 1
+    assert "humans are allowed" not in json.dumps(result, ensure_ascii=False)

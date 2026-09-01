@@ -110,3 +110,17 @@ def test_other_bootstrap_errors_remain_retryable(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="HTTP 503"):
         v6._run_to_captcha_v6(SimpleNamespace(), country="USA")
+
+
+def test_v6_installs_terminal_exit_code_for_server_rejection(monkeypatch) -> None:
+    monkeypatch.setattr(v6.v5, "DETERMINISTIC_FAILURE_EXIT_CODES", {})
+
+    v6._install_v6_contract()
+
+    assert v6.EXIT_CAPTCHA_SERVER_REJECTED == 44
+    assert (
+        v6.v5.DETERMINISTIC_FAILURE_EXIT_CODES[
+            "server_rejected_after_local_context_pass"
+        ]
+        == v6.EXIT_CAPTCHA_SERVER_REJECTED
+    )

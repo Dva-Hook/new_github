@@ -20,6 +20,7 @@ _V5_BUILD_PARSER = v5.build_parser
 _V5_VERIFY_REGISTERED_EMAIL = v6_email_verifier.verify_registered_email
 _V5_RUN_TO_CAPTCHA = v5.BattleProtocolClient.run_to_captcha
 EXIT_EMAIL_ALREADY_REGISTERED = 43
+EXIT_CAPTCHA_SERVER_REJECTED = 44
 
 
 def _map_v6_environment() -> None:
@@ -138,9 +139,10 @@ def _run_to_captcha_v6(self, *args, **kwargs):
 
 
 def _install_v6_contract() -> None:
-    # V5 remains byte-for-byte unchanged. Its runtime globals are replaced only
+    # V5's default behavior remains unchanged. Runtime globals are replaced only
     # inside this V6 process, so registration, solver and verification logic are
-    # exactly the V5 implementation while credential parsing uses V6 semantics.
+    # exactly the V5 implementation while credential parsing and V6 retry
+    # classification use V6 semantics.
     v5.DEFAULT_OUTPUT_ROOT = DEFAULT_OUTPUT_ROOT
     v5.build_parser = _build_parser_v6
     v5.EmailCredential = v6_email_pool.EmailCredential
@@ -148,6 +150,9 @@ def _install_v6_contract() -> None:
     v5.verify_registered_email = _verify_registered_email_v6
     v5.BattleProtocolClient.run_to_captcha = _run_to_captcha_v6
     v5.setup_logging = _setup_v6_logging
+    v5.DETERMINISTIC_FAILURE_EXIT_CODES = {
+        "server_rejected_after_local_context_pass": EXIT_CAPTCHA_SERVER_REJECTED,
+    }
 
 
 def _selected_api_line() -> str:

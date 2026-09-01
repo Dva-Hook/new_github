@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import random
+import re
 import sys
 import time
 import traceback
@@ -55,6 +56,166 @@ DEFAULT_WINDOWS_USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/150.0.0.0 Safari/537.36"
 )
+
+# V5 keeps its historical exit code by default.  V6 installs a narrow,
+# process-local override for deterministic submission outcomes so its workflow
+# can distinguish them from retryable transport and solver failures.
+DETERMINISTIC_FAILURE_EXIT_CODES: dict[str, int] = {}
+_DIAGNOSTIC_SECRET_FIELDS = {
+    "api_key",
+    "blob",
+    "client_key",
+    "cookie",
+    "cookies",
+    "password",
+    "proxy",
+    "proxy_login",
+    "proxy_password",
+    "proxy_url",
+    "token",
+}
+
+
+def _diagnostic_digest(value: Any, *, length: int = 16) -> str:
+    """Return a short digest for correlating sensitive values without logging them."""
+
+    raw = str(value or "")
+    if not raw:
+        return ""
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:length]
+
+
+def _diagnostic_host(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    parsed = urlsplit(raw if "://" in raw else f"https://{raw}")
+    return str(parsed.hostname or "").lower()
+
+
+def _diagnostic_fields(fields: Mapping[str, Any]) -> dict[str, Any]:
+    """Defend the artifact against accidentally supplied raw secret fields."""
+
+    result: dict[str, Any] = {}
+    for key, value in fields.items():
+        normalized = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", str(key)).casefold()
+        result[str(key)] = (
+            "<redacted>" if normalized in _DIAGNOSTIC_SECRET_FIELDS else value
+        )
+    return result
+
+
+def _diagnostic_event(
+    out: Path,
+    phase: str,
+    started: float,
+    **fields: Any,
+) -> None:
+    """Append a safe phase event and mirror it to the console log.
+
+    Callers pass only explicit diagnostic fields. Secrets are represented by
+    lengths/digests so the trace remains useful when uploaded as an artifact.
+    """
+
+    safe_fields = _diagnostic_fields(fields)
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+        "elapsedMs": round((time.perf_counter() - started) * 1000, 1),
+        "phase": phase,
+        **safe_fields,
+    }
+    path = out / "diagnostic_trace.jsonl"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    except Exception as exc:
+        LOG.warning("诊断时间线写入失败：%s", type(exc).__name__)
+    visible = " ".join(
+        f"{key}={value}"
+        for key, value in safe_fields.items()
+        if value not in (None, "", [], {})
+    )
+    LOG.info("[诊断] %s%s", phase, f" | {visible}" if visible else "")
+
+
+def _protocol_diagnostic_snapshot(client: Any) -> dict[str, Any]:
+    state = getattr(getattr(client, "state", None), "data", {}) or {}
+    response = state.get("response") if isinstance(state, Mapping) else {}
+    if not isinstance(response, Mapping):
+        response = {}
+    form = getattr(client, "form", None)
+    return {
+        "stateStatus": str(state.get("status") or "") if isinstance(state, Mapping) else "",
+        "formStep": str(getattr(form, "step", "") or "") if form else "",
+        "responseLabel": str(response.get("label") or ""),
+        "responseStatus": response.get("statusCode"),
+        "responseLength": response.get("length"),
+        "responseSha256": str(response.get("sha256") or "")[:16],
+        "responseHost": _diagnostic_host(response.get("url")),
+        "responsePath": str(response.get("path") or ""),
+    }
+
+
+def _protocol_history(client: Any) -> list[dict[str, Any]]:
+    state = getattr(getattr(client, "state", None), "data", {}) or {}
+    raw_history = state.get("history") if isinstance(state, Mapping) else []
+    if not isinstance(raw_history, list):
+        return []
+    events: list[dict[str, Any]] = []
+    for index, raw in enumerate(raw_history, start=1):
+        if not isinstance(raw, Mapping):
+            continue
+        events.append(
+            {
+                "transitionIndex": index,
+                "stateEventAt": str(raw.get("at") or ""),
+                "completed": str(raw.get("completed") or ""),
+                "failed": str(raw.get("failed") or ""),
+                "nextStep": str(raw.get("next") or ""),
+                "returnedStep": str(raw.get("returned") or ""),
+                "classification": str(raw.get("classification") or ""),
+                "httpStatus": raw.get("httpStatus"),
+                "responseSha256": str(raw.get("responseSha256") or "")[:16],
+            }
+        )
+    return events
+
+
+def _emit_protocol_history(out: Path, client: Any, started: float) -> None:
+    for event in _protocol_history(client):
+        _diagnostic_event(out, "protocol_transition", started, **event)
+
+
+def _server_response_signals(outcome: Mapping[str, Any]) -> dict[str, Any]:
+    """Classify a captcha-gate response without copying its visible text."""
+
+    sample = str(outcome.get("sample") or "")
+    errors = outcome.get("errors")
+    if not isinstance(errors, list):
+        errors = []
+    text = " ".join([sample, *(str(value) for value in errors)]).casefold()
+    labels: list[str] = []
+    patterns = (
+        ("humanity_only", ("detecting humanity", "only humans are allowed")),
+        ("value_invalid", ("value is invalid", "value invalid")),
+        ("captcha_related", ("arkose", "funcaptcha", "captcha")),
+        ("session_or_csrf", ("csrf", "session expired", "session has expired")),
+        ("rate_limited", ("rate limit", "too many", "try again later")),
+        ("email_already_registered", ("already registered", "already exists")),
+    )
+    for label, needles in patterns:
+        if any(needle in text for needle in needles):
+            labels.append(label)
+    if not labels:
+        labels.append("no_known_server_signal")
+    return {
+        "labels": labels,
+        "errorCount": len(errors),
+        "sampleLength": len(sample),
+        "sampleSha256": _diagnostic_digest(sample),
+        "errorSha256": [_diagnostic_digest(value) for value in errors],
+    }
 
 
 def parse_proxy_direct_hosts(value: Any) -> tuple[str, ...]:
@@ -328,6 +489,7 @@ def solve_with_capmonster(
     out: Path,
     proxy: v4.ProxySettings,
 ) -> dict[str, Any]:
+    solver_started = time.perf_counter()
     blob = str(context.get("blob") or "")
     site_key = str(context.get("siteKey") or v4.DEFAULT_SITE_KEY)
     surl = str(context.get("surl") or v4.DEFAULT_SURL)
@@ -367,19 +529,74 @@ def solve_with_capmonster(
         task_mode,
         route_note,
     )
+    _diagnostic_event(
+        out,
+        "capmonster_create_start",
+        solver_started,
+        solver="capmonster",
+        taskType=task["type"],
+        proxyMode=task_mode,
+        proxyConfigured=bool(use_proxy),
+        blobLength=len(blob),
+        blobSha256=_diagnostic_digest(blob),
+        siteKeySha256=_diagnostic_digest(site_key),
+        surlHost=_diagnostic_host(surl),
+        websiteHost=_diagnostic_host(website_url),
+        userAgentSha256=_diagnostic_digest(user_agent),
+    )
 
     session = requests.Session()
     session.headers.update({"Content-Type": "application/json"})
-    create_response = session.post(
-        args.capmonster_create_url,
-        json={"clientKey": str(args.capmonster_key).strip(), "task": task},
-        timeout=20,
-    )
-    create_response.raise_for_status()
-    created = create_response.json()
+    try:
+        create_response = session.post(
+            args.capmonster_create_url,
+            json={"clientKey": str(args.capmonster_key).strip(), "task": task},
+            timeout=20,
+        )
+    except Exception as exc:
+        _diagnostic_event(
+            out,
+            "capmonster_create_error",
+            solver_started,
+            solver="capmonster",
+            errorType=type(exc).__name__,
+        )
+        raise
+    try:
+        create_response.raise_for_status()
+        created = create_response.json()
+    except Exception as exc:
+        _diagnostic_event(
+            out,
+            "capmonster_create_invalid_response",
+            solver_started,
+            solver="capmonster",
+            httpStatus=int(create_response.status_code),
+            errorType=type(exc).__name__,
+        )
+        raise
     write_json(out / "capmonster_create_response.json", _redacted_provider_response(created))
     task_id = created.get("taskId")
+    _diagnostic_event(
+        out,
+        "capmonster_create_response",
+        solver_started,
+        solver="capmonster",
+        httpStatus=int(create_response.status_code),
+        providerErrorId=int(created.get("errorId") or 0),
+        errorCodePresent=bool(created.get("errorCode")),
+        hasTaskId=bool(task_id),
+        responseKeys=sorted(str(key) for key in created.keys()),
+    )
     if not task_id or int(created.get("errorId") or 0):
+        _diagnostic_event(
+            out,
+            "capmonster_create_failed",
+            solver_started,
+            solver="capmonster",
+            providerErrorId=int(created.get("errorId") or 0),
+            errorCodePresent=bool(created.get("errorCode")),
+        )
         raise RuntimeError(
             f"CapMonster 创建任务失败：错误代码={created.get('errorCode')}，"
             f"错误说明={created.get('errorDescription')}"
@@ -389,16 +606,53 @@ def solve_with_capmonster(
     deadline = time.monotonic() + float(args.capmonster_timeout)
     polls = 0
     last: dict[str, Any] = {}
+    last_status = ""
     while time.monotonic() < deadline:
         polls += 1
-        response = session.post(
-            args.capmonster_result_url,
-            json={"clientKey": str(args.capmonster_key).strip(), "taskId": task_id},
-            timeout=15,
-        )
-        response.raise_for_status()
-        last = response.json()
+        try:
+            response = session.post(
+                args.capmonster_result_url,
+                json={"clientKey": str(args.capmonster_key).strip(), "taskId": task_id},
+                timeout=15,
+            )
+        except Exception as exc:
+            _diagnostic_event(
+                out,
+                "capmonster_poll_error",
+                solver_started,
+                solver="capmonster",
+                poll=polls,
+                errorType=type(exc).__name__,
+            )
+            raise
+        try:
+            response.raise_for_status()
+            last = response.json()
+        except Exception as exc:
+            _diagnostic_event(
+                out,
+                "capmonster_poll_invalid_response",
+                solver_started,
+                solver="capmonster",
+                poll=polls,
+                httpStatus=int(response.status_code),
+                errorType=type(exc).__name__,
+            )
+            raise
         status = str(last.get("status") or "")
+        if status != last_status or polls == 1 or polls % 10 == 0:
+            _diagnostic_event(
+                out,
+                "capmonster_poll",
+                solver_started,
+                solver="capmonster",
+                poll=polls,
+                httpStatus=int(response.status_code),
+                providerStatus=status,
+                providerErrorId=int(last.get("errorId") or 0),
+                errorCodePresent=bool(last.get("errorCode")),
+            )
+            last_status = status
         if status == "ready":
             token = str((last.get("solution") or {}).get("token") or "")
             write_json(
@@ -406,7 +660,24 @@ def solve_with_capmonster(
                 _redacted_provider_response(last),
             )
             if not token:
+                _diagnostic_event(
+                    out,
+                    "capmonster_ready_without_token",
+                    solver_started,
+                    solver="capmonster",
+                    poll=polls,
+                )
                 raise RuntimeError("CapMonster 已返回 ready，但缺少 solution.token")
+            _diagnostic_event(
+                out,
+                "capmonster_ready",
+                solver_started,
+                solver="capmonster",
+                poll=polls,
+                tokenPresent=True,
+                tokenLength=len(token),
+                tokenSha256=_diagnostic_digest(token),
+            )
             return {
                 "ok": True,
                 "token": token,
@@ -423,12 +694,30 @@ def solve_with_capmonster(
                 out / "capmonster_result.json",
                 _redacted_provider_response(last),
             )
+            _diagnostic_event(
+                out,
+                "capmonster_failed",
+                solver_started,
+                solver="capmonster",
+                poll=polls,
+                providerStatus=status,
+                providerErrorId=int(last.get("errorId") or 0),
+                errorCodePresent=bool(last.get("errorCode")),
+            )
             raise RuntimeError(
                 f"CapMonster 任务失败：错误代码={last.get('errorCode')}，"
                 f"错误说明={last.get('errorDescription')}"
             )
         time.sleep(float(args.capmonster_poll_interval))
     write_json(out / "capmonster_result.json", _redacted_provider_response(last))
+    _diagnostic_event(
+        out,
+        "capmonster_timeout",
+        solver_started,
+        solver="capmonster",
+        poll=polls,
+        lastProviderStatus=str(last.get("status") or ""),
+    )
     raise TimeoutError(
         f"CapMonster 任务 {task_id} 在 {args.capmonster_timeout} 秒后超时"
     )
@@ -1107,6 +1396,7 @@ def main() -> int:
     submission_diagnosis: Optional[dict[str, Any]] = None
     registration_started_at = datetime.now(timezone.utc)
     started = time.perf_counter()
+    diagnostic_phase = "initialization"
     try:
         proxy = v4.parse_proxy(args.proxy)
         if resume_path is not None:
@@ -1168,6 +1458,10 @@ def main() -> int:
         write_json(out / "v5_configuration.json", config)
         LOG.info("输出目录：%s", out)
         LOG.info(
+            "诊断时间线：%s",
+            (out / "diagnostic_trace.jsonl").resolve(),
+        )
+        LOG.info(
             "流程：持久 HTTP -> %s/%s -> HTTP captcha-gate",
             args.browser,
             args.solver,
@@ -1186,9 +1480,28 @@ def main() -> int:
         )
         LOG.info("账号：%s", identity["email"])
         LOG.info("战网昵称：%s", identity["battle_tag"])
+        diagnostic_phase = "configured"
+        _diagnostic_event(
+            out,
+            "run_configured",
+            started,
+            solver=args.solver,
+            browser=args.browser,
+            registrationCountry=registration_country,
+            emailSource=args.email_source,
+            proxyEnabled=bool(proxy.enabled),
+            proxyHasAuth=bool(proxy.has_auth),
+            resumed=bool(resume_path is not None),
+        )
 
         if state.data.get("status") == "complete":
             LOG.info("持久状态已经完成")
+            _diagnostic_event(
+                out,
+                "already_complete",
+                started,
+                stateStatus=str(state.data.get("status") or ""),
+            )
             print(f"账号：{identity['email']}")
             print(f"密码：{identity['password']}")
             print(f"战网昵称：{identity.get('battle_tag', '')}")
@@ -1196,6 +1509,14 @@ def main() -> int:
 
         runtime_proxy_url = proxy.url
         if proxy.enabled and proxy.url:
+            diagnostic_phase = "proxy_meter"
+            _diagnostic_event(
+                out,
+                "proxy_meter_start",
+                started,
+                proxyEnabled=True,
+                directHosts=list(config["proxyDirectHosts"]),
+            )
             traffic_meter = ProxyTrafficMeter(
                 proxy.url,
                 direct_hosts=config["proxyDirectHosts"],
@@ -1209,7 +1530,14 @@ def main() -> int:
             traffic_snapshots["start"] = v4.capture_proxy_traffic_snapshot(
                 traffic_meter
             )
+            _diagnostic_event(
+                out,
+                "proxy_meter_ready",
+                started,
+                localProxyConfigured=bool(runtime_proxy_url),
+            )
 
+        diagnostic_phase = "protocol_flow"
         client = BattleProtocolClient(
             state,
             out,
@@ -1220,12 +1548,39 @@ def main() -> int:
             accept_language="en-GB,en;q=0.9",
             timeout=args.protocol_timeout,
         )
+        _diagnostic_event(
+            out,
+            "protocol_start",
+            started,
+            entryHost=_diagnostic_host(args.entry_url),
+            stateStatus=str(state.data.get("status") or ""),
+            formStep=str(getattr(client.form, "step", "") or "") if client.form else "",
+            timeoutSeconds=float(args.protocol_timeout),
+        )
         if state.data.get("status") not in {"captcha-gate", "token-ready"}:
-            client.run_to_captcha(
-                country=registration_country,
-                opt_in=False,
-                country_probe=bool(args.country_probe),
-            )
+            try:
+                client.run_to_captcha(
+                    country=registration_country,
+                    opt_in=False,
+                    country_probe=bool(args.country_probe),
+                )
+            except BaseException as exc:
+                _emit_protocol_history(out, client, started)
+                _diagnostic_event(
+                    out,
+                    "protocol_error",
+                    started,
+                    errorType=type(exc).__name__,
+                    **_protocol_diagnostic_snapshot(client),
+                )
+                raise
+        _emit_protocol_history(out, client, started)
+        _diagnostic_event(
+            out,
+            "protocol_ready",
+            started,
+            **_protocol_diagnostic_snapshot(client),
+        )
         LOG.info("持久 HTTP 流程已到达 captcha-gate")
         arkose = dict(state.data.get("arkose") or {})
         if not arkose.get("blob"):
@@ -1244,6 +1599,18 @@ def main() -> int:
             arkose.get("siteKey"),
             len(str(arkose.get("blob") or "")),
         )
+        _diagnostic_event(
+            out,
+            "captcha_context_ready",
+            started,
+            source=str(arkose.get("source") or ""),
+            blobLength=len(str(arkose.get("blob") or "")),
+            blobSha256=_diagnostic_digest(arkose.get("blob")),
+            siteKeySha256=_diagnostic_digest(arkose.get("siteKey")),
+            surlHost=_diagnostic_host(arkose.get("surl")),
+            websiteHost=_diagnostic_host(arkose.get("websiteURL")),
+            **_protocol_diagnostic_snapshot(client),
+        )
 
         token = (
             str(arkose.get("token") or "")
@@ -1251,41 +1618,80 @@ def main() -> int:
             else ""
         )
         health: dict[str, Any]
-        if token:
-            health = {"ok": True, "status": "not-required-resumed-token"}
-            solve_result = {
-                "ok": True,
-                "token": token,
-                "actions": [],
-                "resumedToken": True,
-            }
-        elif args.solver == "capmonster":
-            health = {"ok": True, "status": "external-provider"}
-            solve_result = solve_with_capmonster(arkose, args, out, proxy)
-            token = str(solve_result["token"])
-        else:
-            if args.solver == "v11":
-                health = v4.wait_rank_v11_service(
-                    args.rank_v11_url, args.rank_v11_timeout
-                )
-                write_json(out / "rank_v11_health.json", health)
-                LOG.info(
-                    "本地 V11 已就绪：设备=%s，加载=%.3f 秒，预热=%.3f 秒",
-                    health.get("device"),
-                    float(health.get("model_load_seconds") or 0.0),
-                    float(health.get("warmup_seconds") or 0.0),
-                )
+        diagnostic_phase = "captcha_solver"
+        solver_started = time.perf_counter()
+        _diagnostic_event(
+            out,
+            "solver_start",
+            started,
+            solver=args.solver,
+            browser=args.browser,
+            resumedToken=bool(token),
+            capmonsterProxyMode=(
+                args.capmonster_proxy_mode
+                if args.solver == "capmonster"
+                else "not-applicable"
+            ),
+        )
+        try:
+            if token:
+                health = {"ok": True, "status": "not-required-resumed-token"}
+                solve_result = {
+                    "ok": True,
+                    "token": token,
+                    "actions": [],
+                    "resumedToken": True,
+                }
+            elif args.solver == "capmonster":
+                health = {"ok": True, "status": "external-provider"}
+                solve_result = solve_with_capmonster(arkose, args, out, proxy)
+                token = str(solve_result["token"])
             else:
-                health = {"ok": True, "status": "external-classifier"}
-            solve_result, arkose = solve_with_browser(
-                client,
-                arkose,
-                args,
-                proxy,
+                if args.solver == "v11":
+                    health = v4.wait_rank_v11_service(
+                        args.rank_v11_url, args.rank_v11_timeout
+                    )
+                    write_json(out / "rank_v11_health.json", health)
+                    LOG.info(
+                        "本地 V11 已就绪：设备=%s，加载=%.3f 秒，预热=%.3f 秒",
+                        health.get("device"),
+                        float(health.get("model_load_seconds") or 0.0),
+                        float(health.get("warmup_seconds") or 0.0),
+                    )
+                else:
+                    health = {"ok": True, "status": "external-classifier"}
+                solve_result, arkose = solve_with_browser(
+                    client,
+                    arkose,
+                    args,
+                    proxy,
+                    out,
+                    runtime_proxy_url,
+                )
+                token = str(solve_result["token"])
+        except BaseException as exc:
+            _diagnostic_event(
                 out,
-                runtime_proxy_url,
+                "solver_error",
+                started,
+                solver=args.solver,
+                errorType=type(exc).__name__,
+                solverElapsedMs=round((time.perf_counter() - solver_started) * 1000, 1),
             )
-            token = str(solve_result["token"])
+            raise
+        _diagnostic_event(
+            out,
+            "solver_ready",
+            started,
+            solver=args.solver,
+            provider=str(solve_result.get("provider") or args.solver),
+            tokenPresent=bool(token),
+            tokenLength=len(token),
+            tokenSha256=_diagnostic_digest(token),
+            solverElapsedMs=round((time.perf_counter() - solver_started) * 1000, 1),
+            providerStatus=str(solve_result.get("status") or ""),
+            polls=solve_result.get("polls"),
+        )
 
         arkose["token"] = token
         state.checkpoint(
@@ -1317,13 +1723,48 @@ def main() -> int:
             submission_diagnosis["tokenSha256"][:12],
             ",".join(submission_diagnosis["issues"]) or "无",
         )
+        _diagnostic_event(
+            out,
+            "captcha_precheck",
+            started,
+            ok=bool(submission_diagnosis["ok"]),
+            issueCount=len(submission_diagnosis["issues"]),
+            issues=list(submission_diagnosis["issues"]),
+            formStep=str(submission_diagnosis.get("formStep") or ""),
+            formControlCount=submission_diagnosis.get("formControlCount"),
+            stateStatus=str(submission_diagnosis.get("stateStatus") or ""),
+            blobLength=submission_diagnosis.get("blobLength"),
+            blobSha256=str(submission_diagnosis.get("blobSha256") or "")[:16],
+            tokenLength=submission_diagnosis.get("tokenLength"),
+            tokenSha256=str(submission_diagnosis.get("tokenSha256") or "")[:16],
+        )
         if not submission_diagnosis["ok"]:
             raise RuntimeError(
                 "Arkose 提交上下文诊断失败："
                 + ",".join(submission_diagnosis["issues"])
             )
 
-        outcome = client.submit_captcha(token)
+        diagnostic_phase = "captcha_submit"
+        submit_started = time.perf_counter()
+        _diagnostic_event(
+            out,
+            "captcha_submit_start",
+            started,
+            formStep=str(getattr(client.form, "step", "") or "") if client.form else "",
+            formActionHost=_diagnostic_host(getattr(client.form, "action", "") if client.form else ""),
+        )
+        try:
+            outcome = client.submit_captcha(token)
+        except BaseException as exc:
+            _diagnostic_event(
+                out,
+                "captcha_submit_error",
+                started,
+                errorType=type(exc).__name__,
+                submitElapsedMs=round((time.perf_counter() - submit_started) * 1000, 1),
+                **_protocol_diagnostic_snapshot(client),
+            )
+            raise
         success = outcome.get("status") == "success" and bool(outcome.get("success"))
         submission_diagnosis["outcome"] = {
             key: outcome.get(key)
@@ -1349,6 +1790,9 @@ def main() -> int:
                 else "submission_not_confirmed"
             )
         )
+        submission_diagnosis["serverResponseSignals"] = _server_response_signals(
+            outcome
+        )
         write_json(
             out / "captcha_submission_diagnosis.json",
             submission_diagnosis,
@@ -1358,6 +1802,33 @@ def main() -> int:
             submission_diagnosis["assessment"],
             outcome.get("status"),
             outcome.get("httpStatus"),
+        )
+        _diagnostic_event(
+            out,
+            "captcha_submit_result",
+            started,
+            success=bool(success),
+            assessment=str(submission_diagnosis["assessment"]),
+            serverStatus=str(outcome.get("status") or ""),
+            httpStatus=outcome.get("httpStatus"),
+            stepId=str(outcome.get("stepId") or ""),
+            hasExpectedEmail=bool(outcome.get("hasExpectedEmail")),
+            hasSuccessIcon=bool(outcome.get("hasSuccessIcon")),
+            hasAllSet=bool(outcome.get("hasAllSet")),
+            hasCreated=bool(outcome.get("hasCreated")),
+            hasDownloadApp=bool(outcome.get("hasDownloadApp")),
+            serverSignals=list(
+                submission_diagnosis["serverResponseSignals"].get("labels") or []
+            ),
+            serverErrorCount=submission_diagnosis["serverResponseSignals"].get(
+                "errorCount"
+            ),
+            serverSampleSha256=str(
+                submission_diagnosis["serverResponseSignals"].get("sampleSha256")
+                or ""
+            ),
+            submitElapsedMs=round((time.perf_counter() - submit_started) * 1000, 1),
+            **_protocol_diagnostic_snapshot(client),
         )
         email_verification = EmailVerificationResult(
             ok=False,
@@ -1425,17 +1896,39 @@ def main() -> int:
                 "browserTraffic": solve_result.get("browserTraffic") or {},
                 "registration": registration,
                 "captchaSubmissionDiagnosis": submission_diagnosis,
+                "diagnosticTrace": str((out / "diagnostic_trace.jsonl").resolve()),
                 "elapsedSeconds": time.perf_counter() - started,
             },
         )
         if not success:
+            assessment = str(
+                (submission_diagnosis or {}).get("assessment") or ""
+            )
+            exit_code = DETERMINISTIC_FAILURE_EXIT_CODES.get(assessment, 1)
+            _diagnostic_event(
+                out,
+                "terminal_failure",
+                started,
+                assessment=assessment,
+                exitCode=exit_code,
+                serverStatus=str(outcome.get("status") or ""),
+                httpStatus=outcome.get("httpStatus"),
+            )
             LOG.error(
                 "captcha-gate 未确认注册成功：状态=%s，样例=%r",
                 outcome.get("status"),
                 outcome.get("sample"),
             )
-            return 1
+            return exit_code
 
+        _diagnostic_event(
+            out,
+            "registration_accepted",
+            started,
+            assessment=str(submission_diagnosis.get("assessment") or ""),
+            serverStatus=str(outcome.get("status") or ""),
+            emailVerificationRequested=bool(email_credential is not None),
+        )
         LOG.info("已通过持久 HTTP 会话完成注册")
         print(f"账号：{identity['email']}")
         print(f"密码：{identity['password']}")
@@ -1445,9 +1938,22 @@ def main() -> int:
         return 0
     except KeyboardInterrupt:
         LOG.warning("运行已中断")
+        _diagnostic_event(
+            out,
+            "run_interrupted",
+            started,
+            currentPhase=diagnostic_phase,
+            errorType="KeyboardInterrupt",
+            **_protocol_diagnostic_snapshot(client),
+        )
         write_json(
             out / "summary.json",
-            {"ok": False, "error": "KeyboardInterrupt", "outputDir": str(out)},
+            {
+                "ok": False,
+                "error": "KeyboardInterrupt",
+                "outputDir": str(out),
+                "diagnosticTrace": str((out / "diagnostic_trace.jsonl").resolve()),
+            },
         )
         return 130
     except Exception as exc:
@@ -1458,6 +1964,15 @@ def main() -> int:
             traceback.format_exc(), proxy, args.proxy
         )
         LOG.error("运行失败：%s\n%s", error_text, safe_traceback)
+        with contextlib.suppress(Exception):
+            _diagnostic_event(
+                out,
+                "run_error",
+                started,
+                currentPhase=diagnostic_phase,
+                errorType=type(exc).__name__,
+                **_protocol_diagnostic_snapshot(client),
+            )
         if state is not None:
             with contextlib.suppress(Exception):
                 state.checkpoint(
@@ -1475,6 +1990,7 @@ def main() -> int:
             "emailSource": args.email_source,
             "countryProbe": bool(args.country_probe),
             "proxy": proxy.summary(),
+            "diagnosticTrace": str((out / "diagnostic_trace.jsonl").resolve()),
             "elapsedSeconds": time.perf_counter() - started,
         }
         if isinstance(exc, v4.v3.UnsupportedCaptchaQuestion):
@@ -1527,6 +2043,20 @@ def main() -> int:
                         int(direct.get("connections") or 0),
                         int(direct.get("failures") or 0),
                     )
+        with contextlib.suppress(Exception):
+            _diagnostic_event(
+                out,
+                "run_finished",
+                started,
+                currentPhase=diagnostic_phase,
+                stateStatus=(
+                    str(state.data.get("status") or "")
+                    if state is not None
+                    else ""
+                ),
+                trafficReportPresent=(out / "proxy_traffic.json").is_file(),
+                diagnosticTrace=str((out / "diagnostic_trace.jsonl").resolve()),
+            )
 
 
 if __name__ == "__main__":

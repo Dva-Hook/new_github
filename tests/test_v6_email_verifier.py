@@ -95,6 +95,102 @@ def test_extracts_battlenet_email_security_code() -> None:
     assert target.extract_battlenet_security_code(message) == "KQDLX7"
 
 
+def test_extracts_security_code_when_html_splits_the_code_into_nodes() -> None:
+    message = {
+        "body": {
+            "content": (
+                "<p>Here is your security code:</p>"
+                "<strong>KQ</strong><strong>DLX7</strong>"
+            )
+        },
+        "bodyPreview": "Here is your security code: KQ DLX7",
+    }
+
+    assert target.extract_battlenet_security_code(message) == "KQDLX7"
+
+
+def test_find_security_code_falls_back_to_inbox_messages() -> None:
+    received_at = datetime.now(timezone.utc)
+    message = {
+        "from": {
+            "emailAddress": {
+                "name": "Battle.net",
+                "address": "noreply@battle.net",
+            }
+        },
+        "receivedDateTime": received_at.isoformat().replace("+00:00", "Z"),
+        "body": {
+            "content": "<p>Here is your security code:</p><strong>KQDLX7</strong>"
+        },
+        "bodyPreview": "Here is your security code: KQDLX7",
+    }
+
+    class Response:
+        status_code = 200
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    class Session:
+        def __init__(self):
+            self.urls = []
+
+        def get(self, url, **kwargs):
+            self.urls.append(url)
+            if url == target.INBOX_MESSAGES_URL:
+                return Response({"value": [message]})
+            return Response({"value": []})
+
+    session = Session()
+    result = target.find_security_code(
+        session,
+        "access-token",
+        not_before=received_at - timedelta(seconds=1),
+    )
+
+    assert result == ("KQDLX7", 1, 1)
+    assert session.urls == [target.INBOX_MESSAGES_URL]
+
+
+def test_poll_security_code_retries_transient_graph_errors(monkeypatch) -> None:
+    credential = parse_credential_line(
+        "mail@example.com----mail-pass----client-id----refresh-token",
+        source_index=1,
+    ).to_v5()
+    calls = []
+
+    monkeypatch.setattr(
+        target,
+        "get_access_token",
+        lambda *args, **kwargs: ("access-token", "refresh-token"),
+    )
+
+    def find(*args, **kwargs):
+        calls.append(True)
+        if len(calls) == 1:
+            raise target.requests.Timeout("temporary graph timeout")
+        return "KQDLX7", 1, 1
+
+    monkeypatch.setattr(target, "find_security_code", find)
+    monkeypatch.setattr(target.time, "sleep", lambda seconds: None)
+
+    result = target.poll_security_code(
+        credential,
+        not_before=datetime.now(timezone.utc),
+        timeout=2.0,
+        interval=0.01,
+    )
+
+    assert result == ("KQDLX7", 1, 1)
+    assert len(calls) == 2
+
+
 def test_email_verified_state_recognizes_overview_text() -> None:
     class Page:
         def run_js(self, script, timeout=0):

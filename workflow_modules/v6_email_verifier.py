@@ -124,6 +124,19 @@ EMAIL_VERIFIED_STATE_JS = r"""return (() => {
 })();"""
 
 OVERVIEW_URL = "https://account.battle.net/overview"
+INBOX_MESSAGES_URL = (
+    "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages"
+)
+JUNK_MESSAGES_URL = (
+    "https://graph.microsoft.com/v1.0/me/mailFolders/junkemail/messages"
+)
+SECURITY_MESSAGE_ENDPOINTS = (
+    INBOX_MESSAGES_URL,
+    MESSAGES_URL,
+    JUNK_MESSAGES_URL,
+)
+SECURITY_MESSAGE_PAGE_LIMIT = 5
+SECURITY_MESSAGE_TIME_GRACE = timedelta(minutes=10)
 OVERVIEW_EMAIL_VERIFIED_STATE_JS = r"""return (() => {
   const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
   const isVisible = (node) => {
@@ -478,21 +491,36 @@ def open_verification_link(page: Any, link: str, timeout: float) -> bool:
 
 def _message_text(message: dict[str, Any]) -> str:
     content = str(dict(message.get("body") or {}).get("content") or "")
-    content = html.unescape(re.sub(r"<[^>]+>", " ", content))
+    content = html.unescape(
+        re.sub(
+            r"<(?:script|style)\b[^>]*>.*?</(?:script|style)>",
+            " ",
+            content,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+    )
+    content = re.sub(r"<[^>]+>", " ", content)
     preview = str(message.get("bodyPreview") or "")
     return re.sub(r"\s+", " ", f"{content} {preview}").strip()
 
 
 def extract_battlenet_security_code(message: dict[str, Any]) -> Optional[str]:
     text = unicodedata.normalize("NFKC", _message_text(message))
-    match = re.search(
+    text = re.sub(r"[\u200b-\u200d\ufeff]", "", text)
+    marker = (
         r"(?:security\s+code|verification\s+code|"
         r"验证码|驗證碼|c[oó]digo\s+de\s+seguran[cç]a|보안\s*코드)"
-        r".{0,160}?\b([A-Z0-9]{6})\b",
-        text,
-        re.IGNORECASE | re.DOTALL,
+        r".{0,160}?"
+        r"(?<![A-Z0-9])((?:[A-Z0-9][\s\u00a0]*){6})(?![A-Z0-9])"
     )
-    return match.group(1).upper() if match else None
+    variants = (
+        text,
+    )
+    for variant in variants:
+        match = re.search(marker, variant, re.IGNORECASE | re.DOTALL)
+        if match:
+            return re.sub(r"[\s\u00a0]+", "", match.group(1)).upper()
+    return None
 
 
 def _parse_graph_datetime(value: Any) -> Optional[datetime]:
@@ -524,41 +552,75 @@ def find_security_code(
         "$select": "id,subject,from,receivedDateTime,bodyPreview,body",
         "$orderby": "receivedDateTime desc",
     }
-    next_url: Optional[str] = MESSAGES_URL
     threshold = not_before.astimezone(timezone.utc)
+    grace_threshold = threshold - SECURITY_MESSAGE_TIME_GRACE
     scanned = 0
     matching = 0
-    pages = 0
-    while next_url and pages < 3:
-        pages += 1
-        response = session.get(
-            next_url,
-            headers=headers,
-            params=params if next_url == MESSAGES_URL else None,
-            timeout=30,
-        )
-        if response.status_code == 401:
-            raise AccessTokenExpired("Microsoft access token 已过期")
-        response.raise_for_status()
-        payload = response.json()
-        for message in payload.get("value", []):
-            scanned += 1
-            sender = dict(
-                dict(message.get("from") or {}).get("emailAddress") or {}
+    seen_ids: set[str] = set()
+    grace_candidates: list[tuple[datetime, str, int, int]] = []
+
+    for endpoint in SECURITY_MESSAGE_ENDPOINTS:
+        next_url: Optional[str] = endpoint
+        pages = 0
+        while next_url and pages < SECURITY_MESSAGE_PAGE_LIMIT:
+            pages += 1
+            response = session.get(
+                next_url,
+                headers=headers,
+                params=params if next_url == endpoint else None,
+                timeout=30,
             )
-            sender_address = str(sender.get("address") or "").strip().casefold()
-            sender_name = str(sender.get("name") or "").strip().casefold()
-            if sender_address != "noreply@battle.net" and sender_name != "battle.net":
-                continue
-            matching += 1
-            received = _parse_graph_datetime(message.get("receivedDateTime"))
-            if received is None or received < threshold:
-                continue
-            code = extract_battlenet_security_code(message)
-            if code:
-                return code, scanned, matching
-        next_url = payload.get("@odata.nextLink")
+            if response.status_code == 401:
+                raise AccessTokenExpired("Microsoft access token 已过期")
+            response.raise_for_status()
+            payload = response.json()
+            for message in payload.get("value", []):
+                message_id = str(message.get("id") or "").strip()
+                if message_id and message_id in seen_ids:
+                    continue
+                if message_id:
+                    seen_ids.add(message_id)
+                scanned += 1
+                sender = dict(
+                    dict(message.get("from") or {}).get("emailAddress") or {}
+                )
+                sender_address = str(sender.get("address") or "").strip().casefold()
+                sender_name = re.sub(
+                    r"\s+",
+                    " ",
+                    unicodedata.normalize(
+                        "NFKC", str(sender.get("name") or "")
+                    ),
+                ).strip().casefold()
+                if sender_address != "noreply@battle.net" and sender_name != "battle.net":
+                    continue
+                matching += 1
+                received = _parse_graph_datetime(message.get("receivedDateTime"))
+                if received is None or received < grace_threshold:
+                    continue
+                code = extract_battlenet_security_code(message)
+                if not code:
+                    continue
+                candidate = (received, code, scanned, matching)
+                if received >= threshold:
+                    return code, scanned, matching
+                grace_candidates.append(candidate)
+            next_url = payload.get("@odata.nextLink")
+
+    if grace_candidates:
+        _, code, candidate_scanned, candidate_matching = max(
+            grace_candidates, key=lambda item: item[0]
+        )
+        return code, max(scanned, candidate_scanned), max(matching, candidate_matching)
     return None, scanned, matching
+
+
+def _is_retryable_graph_error(error: requests.RequestException) -> bool:
+    response = getattr(error, "response", None)
+    status = getattr(response, "status_code", None)
+    if status is None:
+        return True
+    return status in {408, 425, 429} or 500 <= int(status) <= 599
 
 
 def poll_security_code(
@@ -566,7 +628,7 @@ def poll_security_code(
     *,
     not_before: datetime,
     timeout: float,
-    interval: float = 5.0,
+    interval: float = 3.0,
 ) -> tuple[str, int, int]:
     deadline = time.monotonic() + max(1.0, float(timeout))
     refresh_token = credential.refresh_token
@@ -578,7 +640,9 @@ def poll_security_code(
         access_token, refresh_token = get_access_token(
             session, credential.client_id, refresh_token
         )
+        attempt = 0
         while time.monotonic() < deadline:
+            attempt += 1
             try:
                 code, scanned, matching = find_security_code(
                     session,
@@ -590,8 +654,30 @@ def poll_security_code(
                     session, credential.client_id, refresh_token
                 )
                 continue
+            except requests.RequestException as exc:
+                if not _is_retryable_graph_error(exc):
+                    raise
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                delay = min(max(0.5, float(interval)), remaining)
+                LOG.warning(
+                    "读取 Battle.net 安全码暂时失败，第 %s 次将在 %.1f 秒后重试：%s",
+                    attempt,
+                    delay,
+                    type(exc).__name__,
+                )
+                time.sleep(delay)
+                continue
             scanned_total = max(scanned_total, scanned)
             matching_total = max(matching_total, matching)
+            LOG.info(
+                "邮箱安全码扫描：第 %s 次，已扫描=%s，Battle.net 发件人匹配=%s，找到=%s",
+                attempt,
+                scanned,
+                matching,
+                bool(code),
+            )
             if code:
                 return code, scanned_total, matching_total
             remaining = deadline - time.monotonic()

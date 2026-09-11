@@ -13,11 +13,12 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 from urllib.parse import parse_qs, urlsplit
 
 import requests
 
+from o2_email_reader import O2MailboxClient, O2MailboxError
 from v5_email_pool import EmailCredential
 from v5_resource_policy import install_ruyi_tracking_filter
 
@@ -879,6 +880,28 @@ def find_link(
     return None, scanned, sender_matches
 
 
+def find_link_in_messages(
+    messages: Iterable[dict[str, Any]],
+    *,
+    not_before: datetime,
+) -> tuple[Optional[str], int, int]:
+    """Apply the existing sender/time/link filters to normalized messages."""
+
+    scanned = 0
+    sender_matches = 0
+    for message in messages:
+        scanned += 1
+        if _message_sender(message) != SENDER:
+            continue
+        if not _message_is_recent(message, not_before):
+            continue
+        sender_matches += 1
+        link = extract_battlenet_link(message)
+        if link:
+            return link, scanned, sender_matches
+    return None, scanned, sender_matches
+
+
 def poll_verification_link(
     credential: EmailCredential,
     *,
@@ -914,6 +937,96 @@ def poll_verification_link(
             if remaining > 0:
                 time.sleep(min(float(interval), remaining))
     return None, scanned_total, matching_total
+
+
+def poll_verification_link_o2(
+    credential: EmailCredential,
+    *,
+    not_before: datetime,
+    timeout: float,
+    interval: float = 5.0,
+) -> tuple[Optional[str], int, int]:
+    """Poll the external O2 reader after the direct Graph path is exhausted."""
+
+    deadline = time.monotonic() + max(1.0, float(timeout))
+    scanned_total = 0
+    matching_total = 0
+    with requests.Session() as session:
+        session.trust_env = False
+        session.headers["User-Agent"] = "BattleNetV5EmailVerifier-O2/1.0"
+        client = O2MailboxClient(session)
+        while time.monotonic() < deadline:
+            try:
+                messages = client.refresh_messages(
+                    email=credential.email,
+                    client_id=credential.client_id,
+                    refresh_token=credential.refresh_token,
+                )
+            except O2MailboxError as exc:
+                LOG.warning(
+                    "O2 验证邮件读取失败：%s",
+                    type(exc).__name__,
+                )
+                raise
+            link, scanned, matching = find_link_in_messages(
+                messages,
+                not_before=not_before,
+            )
+            scanned_total = max(scanned_total, scanned)
+            matching_total = max(matching_total, matching)
+            LOG.info(
+                "O2 验证邮件扫描：已扫描=%s，匹配=%s，已找到=%s",
+                scanned,
+                matching,
+                bool(link),
+            )
+            if link:
+                return link, scanned_total, matching_total
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(min(float(interval), remaining))
+    return None, scanned_total, matching_total
+
+
+def poll_verification_link_with_o2_fallback(
+    credential: EmailCredential,
+    *,
+    not_before: datetime,
+    timeout: float,
+    interval: float = 5.0,
+    graph_reader: Optional[Callable[..., tuple[Optional[str], int, int]]] = None,
+    o2_reader: Optional[Callable[..., tuple[Optional[str], int, int]]] = None,
+) -> tuple[Optional[str], int, int]:
+    """Keep Graph first, then use O2 after timeout or a Graph failure."""
+
+    scanned_total = 0
+    matching_total = 0
+    graph_reader = graph_reader or poll_verification_link
+    o2_reader = o2_reader or poll_verification_link_o2
+    try:
+        link, scanned, matching = graph_reader(
+            credential,
+            not_before=not_before,
+            timeout=timeout,
+            interval=interval,
+        )
+        scanned_total = max(scanned_total, scanned)
+        matching_total = max(matching_total, matching)
+        if link:
+            return link, scanned_total, matching_total
+    except (O2MailboxError, requests.RequestException, RuntimeError, TimeoutError) as exc:
+        LOG.warning(
+            "主 Graph 验证邮件读取路径失败，准备切换 O2：%s",
+            type(exc).__name__,
+        )
+
+    link, scanned, matching = o2_reader(
+        credential,
+        not_before=not_before,
+        timeout=timeout,
+        interval=interval,
+    )
+    return link, max(scanned_total, scanned), max(matching_total, matching)
 
 
 def wait_for_verification_success(page: Any, timeout: float) -> bool:
@@ -955,7 +1068,7 @@ def verify_registered_email(
         )
         if not login_result.ok:
             return login_result
-        link, scanned, matching = poll_verification_link(
+        link, scanned, matching = poll_verification_link_with_o2_fallback(
             credential,
             not_before=not_before,
             timeout=float(args.email_mail_timeout),
@@ -1010,10 +1123,13 @@ __all__ = [
     "direct_battlenet_link",
     "extract_battlenet_link",
     "find_link",
+    "find_link_in_messages",
     "get_access_token",
     "launch_cached_ruyi_browser",
     "login_battle_net",
     "poll_verification_link",
+    "poll_verification_link_o2",
+    "poll_verification_link_with_o2_fallback",
     "sanitize_cached_profile",
     "verify_registered_email",
 ]

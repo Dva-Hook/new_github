@@ -25,6 +25,7 @@ MODULE_NAMES = (
     "email_verify_ruyipage_v3",
     "funcaptcha_http_snapshots",
     "isolated_proxy_adapter",
+    "o2_email_reader",
     "proxy_traffic_meter",
     "register",
     "register_capture_images",

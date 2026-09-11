@@ -22,6 +22,7 @@ from urllib.parse import quote
 
 import requests
 
+from o2_email_reader import O2MailboxClient, O2MailboxError
 from v5_email_pool import EmailCredential
 from v5_email_verifier import (
     AccessTokenExpired,
@@ -34,6 +35,8 @@ from v5_email_verifier import (
     login_battle_net,
     navigate_with_retry,
     poll_verification_link,
+    poll_verification_link_o2,
+    poll_verification_link_with_o2_fallback as _poll_verification_link_with_o2_fallback,
     wait_element,
 )
 
@@ -435,6 +438,25 @@ def poll_verification_link_attempts(
     return None, scanned_total, matching_total
 
 
+def poll_verification_link_with_o2_fallback(
+    credential: EmailCredential,
+    *,
+    not_before: datetime,
+    timeout: float,
+    interval: float = 5.0,
+) -> tuple[Optional[str], int, int]:
+    """Reuse the shared fallback while keeping V6's reader bindings patchable."""
+
+    return _poll_verification_link_with_o2_fallback(
+        credential,
+        not_before=not_before,
+        timeout=timeout,
+        interval=interval,
+        graph_reader=poll_verification_link,
+        o2_reader=poll_verification_link_o2,
+    )
+
+
 def wait_document_complete(page: Any, timeout: float) -> bool:
     deadline = time.monotonic() + max(0.1, float(timeout))
     while time.monotonic() < deadline:
@@ -712,6 +734,118 @@ def _is_retryable_graph_error(error: requests.RequestException) -> bool:
     return status in {408, 425, 429} or 500 <= int(status) <= 599
 
 
+def _security_sender_matches(message: dict[str, Any]) -> bool:
+    sender = dict(
+        dict(message.get("from") or {}).get("emailAddress") or {}
+    )
+    sender_address = str(sender.get("address") or "").strip().casefold()
+    sender_name = re.sub(
+        r"\s+",
+        " ",
+        unicodedata.normalize("NFKC", str(sender.get("name") or "")),
+    ).strip().casefold()
+    return sender_address == "noreply@battle.net" or sender_name == "battle.net"
+
+
+def find_security_code_in_messages(
+    messages: list[dict[str, Any]],
+    *,
+    not_before: datetime,
+) -> tuple[Optional[str], int, int]:
+    """Apply the existing sender/time/code filters to normalized O2 messages."""
+
+    threshold = not_before.astimezone(timezone.utc)
+    grace_threshold = threshold - SECURITY_MESSAGE_TIME_GRACE
+    scanned = 0
+    matching = 0
+    grace_candidates: list[tuple[datetime, str, int, int]] = []
+
+    for message in messages:
+        scanned += 1
+        if not _security_sender_matches(message):
+            continue
+        matching += 1
+        received = _parse_graph_datetime(message.get("receivedDateTime"))
+        if received is None or received < grace_threshold:
+            continue
+        code = extract_battlenet_security_code(message)
+        if not code:
+            continue
+        candidate = (received, code, scanned, matching)
+        if received >= threshold:
+            return code, scanned, matching
+        grace_candidates.append(candidate)
+
+    if grace_candidates:
+        _, code, candidate_scanned, candidate_matching = max(
+            grace_candidates,
+            key=lambda item: item[0],
+        )
+        return code, max(scanned, candidate_scanned), max(matching, candidate_matching)
+    return None, scanned, matching
+
+
+def poll_security_code_o2(
+    credential: EmailCredential,
+    *,
+    not_before: datetime,
+    timeout: float,
+    interval: float = 3.0,
+) -> tuple[Optional[str], int, int]:
+    """Poll the O2 mailbox reader after the Graph/OAuth2 paths are exhausted."""
+
+    deadline = time.monotonic() + max(1.0, float(timeout))
+    scanned_total = 0
+    matching_total = 0
+    with requests.Session() as session:
+        session.trust_env = False
+        session.headers["User-Agent"] = "BattleNetV6EmailSecurity-O2/1.0"
+        client = O2MailboxClient(session)
+        while time.monotonic() < deadline:
+            messages = client.refresh_messages(
+                email=credential.email,
+                client_id=credential.client_id,
+                refresh_token=credential.refresh_token,
+            )
+            code, scanned, matching = find_security_code_in_messages(
+                messages,
+                not_before=not_before,
+            )
+            scanned_total = max(scanned_total, scanned)
+            matching_total = max(matching_total, matching)
+            LOG.info(
+                "O2 邮箱安全码扫描：已扫描=%s，Battle.net 发件人匹配=%s，找到=%s",
+                scanned,
+                matching,
+                bool(code),
+            )
+            if code:
+                return code, scanned_total, matching_total
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(min(float(interval), remaining))
+    return None, scanned_total, matching_total
+
+
+def _poll_security_code_o2_fallback(
+    credential: EmailCredential,
+    *,
+    not_before: datetime,
+    timeout: float,
+    interval: float,
+) -> tuple[Optional[str], int, int]:
+    try:
+        return poll_security_code_o2(
+            credential,
+            not_before=not_before,
+            timeout=timeout,
+            interval=interval,
+        )
+    except (O2MailboxError, requests.RequestException, RuntimeError, TimeoutError) as exc:
+        LOG.warning("O2 安全码读取失败：%s", type(exc).__name__)
+        return None, 0, 0
+
+
 def poll_security_code(
     credential: EmailCredential,
     *,
@@ -730,9 +864,24 @@ def poll_security_code(
     with requests.Session() as session:
         session.trust_env = False
         session.headers["User-Agent"] = "BattleNetV6EmailSecurity/1.0"
-        access_token, refresh_token = get_access_token(
-            session, credential.client_id, refresh_token
-        )
+        try:
+            access_token, refresh_token = get_access_token(
+                session, credential.client_id, refresh_token
+            )
+        except (RuntimeError, requests.RequestException) as exc:
+            LOG.warning(
+                "主邮箱令牌读取失败，跳过 Graph 直接切换 O2：%s",
+                type(exc).__name__,
+            )
+            code, scanned, matching = _poll_security_code_o2_fallback(
+                credential,
+                not_before=not_before,
+                timeout=timeout,
+                interval=interval,
+            )
+            if code:
+                return code, scanned, matching
+            raise TimeoutError("等待 Battle.net 邮箱安全码超时") from exc
         attempt = 0
         backend = "primary"
         phase_deadline = primary_deadline
@@ -748,7 +897,7 @@ def poll_security_code(
                         )
                     except (RuntimeError, requests.RequestException) as exc:
                         LOG.warning(
-                            "common OAuth2 兼容路径刷新失败：%s",
+                            "common OAuth2 兼容路径刷新失败，准备切换 O2：%s",
                             type(exc).__name__,
                         )
                         break
@@ -767,24 +916,36 @@ def poll_security_code(
                     request_timeout=SECURITY_MESSAGE_REQUEST_TIMEOUT,
                 )
             except AccessTokenExpired:
-                if backend == "oauth2":
-                    access_token, refresh_token = get_access_token_oauth2(
-                        session, credential.client_id, refresh_token
+                try:
+                    if backend == "oauth2":
+                        access_token, refresh_token = get_access_token_oauth2(
+                            session, credential.client_id, refresh_token
+                        )
+                    else:
+                        access_token, refresh_token = get_access_token(
+                            session, credential.client_id, refresh_token
+                        )
+                except (RuntimeError, requests.RequestException) as exc:
+                    LOG.warning(
+                        "邮箱令牌刷新失败，准备切换 O2：%s",
+                        type(exc).__name__,
                     )
-                else:
-                    access_token, refresh_token = get_access_token(
-                        session, credential.client_id, refresh_token
-                    )
+                    break
                 continue
             except GraphMailPermissionError as exc:
                 if backend != "primary":
-                    raise
+                    LOG.warning("common OAuth2 邮箱读取权限不匹配，准备切换 O2：%s", exc)
+                    break
                 LOG.warning("主邮箱读取路径权限不匹配，切换 common OAuth2：%s", exc)
                 phase_deadline = time.monotonic()
                 continue
             except requests.RequestException as exc:
                 if not _is_retryable_graph_error(exc):
-                    raise
+                    LOG.warning(
+                        "Graph 邮箱读取不可重试，准备切换 O2：%s",
+                        type(exc).__name__,
+                    )
+                    break
                 remaining = phase_deadline - time.monotonic()
                 if remaining <= 0:
                     continue
@@ -811,6 +972,18 @@ def poll_security_code(
             remaining = phase_deadline - time.monotonic()
             if remaining > 0:
                 time.sleep(min(float(interval), remaining))
+
+        LOG.warning("Graph/common OAuth2 未读取到安全码，开始 O2 回退")
+        code, scanned, matching = _poll_security_code_o2_fallback(
+            credential,
+            not_before=not_before,
+            timeout=timeout,
+            interval=interval,
+        )
+        scanned_total = max(scanned_total, scanned)
+        matching_total = max(matching_total, matching)
+        if code:
+            return code, scanned_total, matching_total
     raise TimeoutError("等待 Battle.net 邮箱安全码超时")
 
 
@@ -1011,12 +1184,19 @@ def verify_registered_email(
         mail_not_before = max(not_before, requested_at)
         mail_timeout = max(1.0, float(args.email_mail_timeout))
         mail_deadline = time.monotonic() + mail_timeout
-        link, link_scanned, link_matching = poll_verification_link_attempts(
-            credential,
-            not_before=mail_not_before,
-            attempts=3,
-            interval=5.0,
-        )
+        try:
+            link, link_scanned, link_matching = poll_verification_link_attempts(
+                credential,
+                not_before=mail_not_before,
+                attempts=3,
+                interval=5.0,
+            )
+        except (O2MailboxError, requests.RequestException, RuntimeError, TimeoutError) as exc:
+            LOG.warning(
+                "首次三次 Graph 验证邮件读取失败，继续原有重发流程：%s",
+                type(exc).__name__,
+            )
+            link, link_scanned, link_matching = None, 0, 0
         scanned = max(scanned, link_scanned)
         matching = max(matching, link_matching)
         if not link:
@@ -1040,7 +1220,7 @@ def verify_registered_email(
                     type(exc).__name__,
                 )
             remaining_timeout = max(1.0, mail_deadline - time.monotonic())
-            link, retry_scanned, retry_matching = poll_verification_link(
+            link, retry_scanned, retry_matching = poll_verification_link_with_o2_fallback(
                 credential,
                 not_before=mail_not_before,
                 timeout=remaining_timeout,
@@ -1110,8 +1290,11 @@ __all__ = [
     "detect_email_security_stage",
     "extract_battlenet_security_code",
     "find_security_code",
+    "find_security_code_in_messages",
     "poll_verification_link_attempts",
+    "poll_verification_link_with_o2_fallback",
     "poll_security_code",
+    "poll_security_code_o2",
     "read_email_verified_state",
     "request_verification_email",
     "open_verification_link",

@@ -316,6 +316,66 @@ def test_poll_security_code_switches_to_common_oauth2_after_primary_phase(
     assert tokens == ["oauth2"]
 
 
+def test_poll_security_code_uses_o2_after_primary_token_failure(monkeypatch) -> None:
+    credential = parse_credential_line(
+        "mail@example.com----mail-pass----client-id----refresh-token",
+        source_index=1,
+    ).to_v5()
+
+    monkeypatch.setattr(
+        target,
+        "get_access_token",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("primary token rejected")
+        ),
+    )
+    calls: list[object] = []
+
+    def o2_fallback(*args, **kwargs):
+        calls.append(kwargs["timeout"])
+        return "KQDLX7", 2, 1
+
+    monkeypatch.setattr(target, "poll_security_code_o2", o2_fallback)
+
+    result = target.poll_security_code(
+        credential,
+        not_before=datetime.now(timezone.utc),
+        timeout=20.0,
+    )
+
+    assert result == ("KQDLX7", 2, 1)
+    assert calls == [20.0]
+
+
+def test_v5_link_reader_uses_o2_after_graph_timeout(monkeypatch) -> None:
+    credential = parse_credential_line(
+        "mail@example.com----mail-pass----client-id----refresh-token",
+        source_index=1,
+    ).to_v5()
+    monkeypatch.setattr(
+        v5,
+        "poll_verification_link",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            TimeoutError("primary mail timeout")
+        ),
+    )
+    calls: list[object] = []
+
+    def o2_fallback(*args, **kwargs):
+        calls.append(kwargs["timeout"])
+        return "https://account.battle.net/verify?ticket=test", 4, 1
+
+    monkeypatch.setattr(v5, "poll_verification_link_o2", o2_fallback)
+    result = v5.poll_verification_link_with_o2_fallback(
+        credential,
+        not_before=datetime.now(timezone.utc),
+        timeout=20.0,
+    )
+
+    assert result == ("https://account.battle.net/verify?ticket=test", 4, 1)
+    assert calls == [20.0]
+
+
 def test_email_verified_state_recognizes_overview_text() -> None:
     class Page:
         def run_js(self, script, timeout=0):

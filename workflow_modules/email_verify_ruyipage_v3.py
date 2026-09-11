@@ -334,12 +334,20 @@ def _verify_after_login(
     deadline = time.monotonic() + timeout
     scanned = login_result.scanned_messages
     matching = login_result.matching_messages
-    link, scanned_now, matching_now = v6.poll_verification_link_attempts(
-        credential,
-        not_before=mail_not_before,
-        attempts=3,
-        interval=5.0,
-    )
+    try:
+        link, scanned_now, matching_now = v6.poll_verification_link_attempts(
+            credential,
+            not_before=mail_not_before,
+            attempts=3,
+            interval=5.0,
+        )
+    except (RuntimeError, TimeoutError, v6.requests.RequestException) as exc:
+        LOG.warning(
+            "%s：首次三次 Graph 验证邮件读取失败，继续原有重发流程：%s",
+            account.email,
+            type(exc).__name__,
+        )
+        link, scanned_now, matching_now = None, 0, 0
     scanned = max(scanned, scanned_now)
     matching = max(matching, matching_now)
 
@@ -351,7 +359,7 @@ def _verify_after_login(
         )
         if retry_requested_at is None:
             return EmailVerificationResult(True, "already_verified", "", scanned, matching)
-        link, scanned_now, matching_now = v6.poll_verification_link(
+        link, scanned_now, matching_now = v6.poll_verification_link_with_o2_fallback(
             credential,
             not_before=max(mail_not_before, retry_requested_at),
             timeout=max(1.0, deadline - time.monotonic()),

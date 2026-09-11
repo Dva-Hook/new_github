@@ -42,6 +42,7 @@ DEFAULT_REGISTRATION_COUNTRY = "USA"
 DEFAULT_YESCAPTCHA_API_URL = "https://api.yescaptcha.com/createTask"
 DEFAULT_CAPMONSTER_CREATE_URL = "https://api.capmonster.cloud/createTask"
 DEFAULT_CAPMONSTER_RESULT_URL = "https://api.capmonster.cloud/getTaskResult"
+DEFAULT_CAPMONSTER_USER_AGENT_URL = "https://capmonster.cloud/api/useragent/actual"
 DEFAULT_PROXY_DIRECT_HOSTS = (
     "blz-contentstack-assets.akamaized.net",
     "forge.akamaized.net",
@@ -266,6 +267,71 @@ def write_json(path: Path, value: Any) -> None:
     v4.write_json(path, value)
 
 
+def fetch_capmonster_user_agent(url: str = DEFAULT_CAPMONSTER_USER_AGENT_URL) -> str:
+    """Fetch CapMonster's current UA as an unmodified plain-text value."""
+
+    response = requests.get(
+        str(url),
+        headers={"Accept": "text/plain"},
+        timeout=15,
+    )
+    response.raise_for_status()
+    user_agent = str(response.text or "").strip()
+    if not user_agent:
+        raise ValueError("CapMonster User-Agent 接口返回为空")
+    if "\r" in user_agent or "\n" in user_agent:
+        raise ValueError("CapMonster User-Agent 接口返回了多行文本")
+    if not user_agent.startswith("Mozilla/5.0"):
+        raise ValueError("CapMonster User-Agent 接口返回格式异常")
+    if len(user_agent) > 512:
+        raise ValueError("CapMonster User-Agent 接口返回过长")
+    return user_agent
+
+
+def apply_capmonster_user_agent(
+    args: argparse.Namespace,
+    out: Path,
+    url: str = DEFAULT_CAPMONSTER_USER_AGENT_URL,
+) -> dict[str, Any]:
+    """Apply one UA consistently to the V5 HTTP client and CapMonster task."""
+
+    fallback = str(getattr(args, "protocol_user_agent", "") or "").strip()
+    if str(getattr(args, "solver", "") or "").lower() != "capmonster":
+        return {
+            "source": "not-applicable",
+            "length": len(fallback),
+            "sha256": _diagnostic_digest(fallback),
+        }
+    try:
+        user_agent = fetch_capmonster_user_agent(url)
+    except Exception as exc:
+        info = {
+            "source": "configured-fallback",
+            "length": len(fallback),
+            "sha256": _diagnostic_digest(fallback),
+            "errorType": type(exc).__name__,
+        }
+        write_json(out / "capmonster_user_agent.json", info)
+        LOG.warning(
+            "CapMonster 当前 UA 读取失败，回退已配置 UA：错误类型=%s",
+            type(exc).__name__,
+        )
+        return info
+    args.protocol_user_agent = user_agent
+    info = {
+        "source": "capmonster-api",
+        "length": len(user_agent),
+        "sha256": _diagnostic_digest(user_agent),
+    }
+    write_json(out / "capmonster_user_agent.json", {**info, "userAgent": user_agent})
+    LOG.info(
+        "CapMonster 当前 UA 已加载：来源=官方接口，长度=%s，sha256=%s",
+        len(user_agent),
+        _diagnostic_digest(user_agent),
+    )
+    return info
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = v4.build_parser()
     parser.description = (
@@ -359,6 +425,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--capmonster-result-url",
         default=DEFAULT_CAPMONSTER_RESULT_URL,
+    )
+    parser.add_argument(
+        "--capmonster-user-agent-url",
+        default=os.environ.get(
+            "V5_CAPMONSTER_USER_AGENT_URL",
+            DEFAULT_CAPMONSTER_USER_AGENT_URL,
+        ),
+        help="读取 CapMonster 当前 User-Agent 的官方纯文本接口",
     )
     parser.add_argument(
         "--capmonster-proxy-mode",
@@ -1397,6 +1471,11 @@ def main() -> int:
     registration_started_at = datetime.now(timezone.utc)
     started = time.perf_counter()
     diagnostic_phase = "initialization"
+    capmonster_user_agent_info: dict[str, Any] = {
+        "source": "not-applicable",
+        "length": 0,
+        "sha256": "",
+    }
     try:
         proxy = v4.parse_proxy(args.proxy)
         if resume_path is not None:
@@ -1454,6 +1533,12 @@ def main() -> int:
                     "protocolImpersonate": args.protocol_impersonate,
                 },
             )
+        capmonster_user_agent_info = apply_capmonster_user_agent(
+            args,
+            out,
+            args.capmonster_user_agent_url,
+        )
+        config["capmonsterUserAgent"] = dict(capmonster_user_agent_info)
         write_json(out / "account_generated.json", identity)
         write_json(out / "v5_configuration.json", config)
         LOG.info("输出目录：%s", out)
@@ -1492,6 +1577,9 @@ def main() -> int:
             proxyEnabled=bool(proxy.enabled),
             proxyHasAuth=bool(proxy.has_auth),
             resumed=bool(resume_path is not None),
+            capmonsterUserAgentSource=capmonster_user_agent_info["source"],
+            capmonsterUserAgentLength=capmonster_user_agent_info["length"],
+            capmonsterUserAgentSha256=capmonster_user_agent_info["sha256"],
         )
 
         if state.data.get("status") == "complete":
@@ -1886,6 +1974,7 @@ def main() -> int:
                     if args.solver == "capmonster"
                     else "not-applicable"
                 ),
+                "capmonsterUserAgent": capmonster_user_agent_info,
                 "registrationCountry": registration_country,
                 "emailSource": args.email_source,
                 "countryProbe": bool(args.country_probe),

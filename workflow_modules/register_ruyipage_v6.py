@@ -35,6 +35,7 @@ def _map_v6_environment() -> None:
         "EMAIL_BROWSER_CACHE_DIR",
         "VERIFY_EMAIL",
         "CAPMONSTER_PROXY_MODE",
+        "CAPMONSTER_USER_AGENT_URL",
         "PROXY_DIRECT_HOSTS",
         "STATIC_CACHE_DIR",
         "USER_AGENT",

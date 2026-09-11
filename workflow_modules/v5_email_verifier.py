@@ -29,6 +29,10 @@ TOKEN_ENDPOINTS = (
     "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
     "https://login.live.com/oauth20_token.srf",
 )
+# Keep compatibility with the older Outlook fetcher.  Some refresh tokens
+# reject the legacy scope and must be refreshed using their originally granted
+# delegated scopes by omitting ``scope`` altogether.
+TOKEN_SCOPE = "https://graph.microsoft.com/.default offline_access"
 MESSAGES_URL = "https://graph.microsoft.com/v1.0/me/messages"
 URL_PATTERN = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
 DEFAULT_EMAIL_BROWSER_CACHE_DIR = (
@@ -771,27 +775,61 @@ def _message_is_recent(message: dict[str, Any], not_before: datetime) -> bool:
 def get_access_token(
     session: requests.Session, client_id: str, refresh_token: str
 ) -> tuple[str, str]:
+    """Exchange a refresh token while preserving the original grants.
+
+    The old mail reader sent ``/.default offline_access``.  Microsoft may
+    reject that explicit scope for a token whose delegated grants were issued
+    differently, so a scope-less refresh is attempted as a compatibility
+    fallback.  Only response metadata is included in errors; credentials and
+    response bodies are never echoed.
+    """
+
+    def error_detail(response: Any, payload: Any) -> str:
+        status = f"HTTP {response.status_code}"
+        if not isinstance(payload, dict):
+            return f"{status} {response.reason}".strip()
+        error = str(payload.get("error") or "").strip()
+        description = str(payload.get("error_description") or "").strip()
+        if error and description:
+            return f"{status} {error}: {description[:240]}"
+        if error:
+            return f"{status} {error}"
+        return f"{status} {response.reason}".strip()
+
     errors: list[str] = []
     for endpoint in TOKEN_ENDPOINTS:
-        try:
-            response = session.post(
-                endpoint,
-                data={
-                    "client_id": client_id,
-                    "grant_type": "refresh_token",
-                    "refresh_token": refresh_token,
-                    "scope": "https://graph.microsoft.com/.default",
-                },
-                timeout=20,
+        for scope in (TOKEN_SCOPE, None):
+            form = {
+                "client_id": client_id,
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+            }
+            if scope is not None:
+                form["scope"] = scope
+            try:
+                response = session.post(
+                    endpoint,
+                    data=form,
+                    headers={
+                        "Accept": "application/json",
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    },
+                    timeout=20,
+                )
+                data = response.json()
+            except (requests.RequestException, ValueError) as exc:
+                errors.append(f"{urlsplit(endpoint).netloc}: {type(exc).__name__}")
+                continue
+            if isinstance(data, dict):
+                access_token = str(data.get("access_token") or "").strip()
+                if access_token:
+                    rotated = str(data.get("refresh_token") or refresh_token).strip()
+                    return access_token, rotated
+            scope_label = "legacy-scope" if scope is not None else "original-grants"
+            errors.append(
+                f"{urlsplit(endpoint).netloc} [{scope_label}]: "
+                f"{error_detail(response, data)}"
             )
-            data = response.json()
-        except (requests.RequestException, ValueError) as exc:
-            errors.append(f"{urlsplit(endpoint).netloc}: {type(exc).__name__}")
-            continue
-        access_token = data.get("access_token")
-        if access_token:
-            return str(access_token), str(data.get("refresh_token") or refresh_token)
-        errors.append(f"{urlsplit(endpoint).netloc}: token-rejected")
     raise RuntimeError("Microsoft access token 获取失败；" + "；".join(errors))
 
 

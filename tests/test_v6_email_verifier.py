@@ -12,6 +12,78 @@ from v5_email_verifier import EmailVerificationResult
 from v6_email_pool import parse_credential_line
 
 
+def test_access_token_refresh_reuses_granted_scopes_when_scope_is_omitted() -> None:
+    calls: list[dict[str, str]] = []
+
+    class Response:
+        status_code = 200
+        reason = "OK"
+        ok = True
+
+        def __init__(self, data: dict[str, str]) -> None:
+            self.data = data
+
+        def json(self) -> dict[str, str]:
+            if "scope" in self.data:
+                return {"error": "invalid_scope"}
+            return {
+                "access_token": "access-token",
+                "refresh_token": "rotated-refresh-token",
+            }
+
+    class Session:
+        def post(self, endpoint, *, data, **kwargs):
+            calls.append(dict(data))
+            return Response(dict(data))
+
+    access_token, refresh_token = v5.get_access_token(
+        Session(), "client-id", "refresh-token"
+    )
+
+    assert (access_token, refresh_token) == (
+        "access-token",
+        "rotated-refresh-token",
+    )
+    assert calls == [
+        {
+            "client_id": "client-id",
+            "grant_type": "refresh_token",
+            "refresh_token": "refresh-token",
+            "scope": "https://graph.microsoft.com/.default offline_access",
+        },
+        {
+            "client_id": "client-id",
+            "grant_type": "refresh_token",
+            "refresh_token": "refresh-token",
+        },
+    ]
+
+
+def test_access_token_refresh_reports_oauth_error_without_echoing_credentials() -> None:
+    class Response:
+        status_code = 400
+        reason = "Bad Request"
+        ok = False
+
+        def json(self) -> dict[str, str]:
+            return {
+                "error": "invalid_grant",
+                "error_description": "credential rejected for test",
+            }
+
+    class Session:
+        def post(self, endpoint, *, data, **kwargs):
+            return Response()
+
+    with pytest.raises(RuntimeError) as error:
+        v5.get_access_token(Session(), "client-id", "refresh-token")
+
+    message = str(error.value)
+    assert "HTTP 400 invalid_grant" in message
+    assert "credential rejected for test" in message
+    assert "refresh-token" not in message
+
+
 def test_extracts_battlenet_email_security_code() -> None:
     message = {
         "body": {

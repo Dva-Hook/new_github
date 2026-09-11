@@ -84,6 +84,42 @@ def test_access_token_refresh_reports_oauth_error_without_echoing_credentials() 
     assert "refresh-token" not in message
 
 
+def test_oauth2_fallback_uses_common_endpoint_without_scope() -> None:
+    calls: list[dict[str, object]] = []
+
+    class Response:
+        def json(self):
+            return {
+                "access_token": "oauth2-access-token",
+                "refresh_token": "rotated-refresh-token",
+            }
+
+    class Session:
+        def post(self, endpoint, *, data, **kwargs):
+            calls.append({"endpoint": endpoint, "data": dict(data), "kwargs": kwargs})
+            return Response()
+
+    result = target.get_access_token_oauth2(
+        Session(), "client-id", "refresh-token"
+    )
+
+    assert result == ("oauth2-access-token", "rotated-refresh-token")
+    assert calls == [
+        {
+            "endpoint": target.OAUTH2_COMMON_TOKEN_ENDPOINT,
+            "data": {
+                "client_id": "client-id",
+                "grant_type": "refresh_token",
+                "refresh_token": "refresh-token",
+            },
+            "kwargs": {"headers": {
+                "Accept": "application/json",
+                "Content-Type": "application/x-www-form-urlencoded",
+            }, "timeout": 20},
+        }
+    ]
+
+
 def test_extracts_battlenet_email_security_code() -> None:
     message = {
         "body": {
@@ -158,6 +194,57 @@ def test_find_security_code_falls_back_to_inbox_messages() -> None:
     assert session.urls == [target.INBOX_MESSAGES_URL]
 
 
+def test_find_security_code_fetches_body_only_for_matching_preview() -> None:
+    received_at = datetime.now(timezone.utc)
+    message = {
+        "id": "message-id/1",
+        "from": {
+            "emailAddress": {
+                "name": "Battle.net",
+                "address": "noreply@battle.net",
+            }
+        },
+        "receivedDateTime": received_at.isoformat().replace("+00:00", "Z"),
+        "bodyPreview": "Your message does not include the code text",
+    }
+    detail = {"body": {"content": "Your security code: KQDLX7"}}
+
+    class Response:
+        status_code = 200
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    class Session:
+        def __init__(self):
+            self.calls = []
+
+        def get(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            if url == target.INBOX_MESSAGES_URL:
+                return Response({"value": [message]})
+            return Response(detail)
+
+    session = Session()
+    result = target.find_security_code(
+        session,
+        "access-token",
+        not_before=received_at - timedelta(seconds=1),
+    )
+
+    assert result == ("KQDLX7", 1, 1)
+    assert len(session.calls) == 2
+    list_params = session.calls[0][1]["params"]
+    assert "body" not in list_params["$select"].split(",")
+    assert session.calls[1][0].endswith("/message-id%2F1")
+
+
 def test_poll_security_code_retries_transient_graph_errors(monkeypatch) -> None:
     credential = parse_credential_line(
         "mail@example.com----mail-pass----client-id----refresh-token",
@@ -189,6 +276,44 @@ def test_poll_security_code_retries_transient_graph_errors(monkeypatch) -> None:
 
     assert result == ("KQDLX7", 1, 1)
     assert len(calls) == 2
+
+
+def test_poll_security_code_switches_to_common_oauth2_after_primary_phase(
+    monkeypatch,
+) -> None:
+    credential = parse_credential_line(
+        "mail@example.com----mail-pass----client-id----refresh-token",
+        source_index=1,
+    ).to_v5()
+    clock = [0.0]
+    tokens = []
+
+    monkeypatch.setattr(target, "get_access_token", lambda *args, **kwargs: ("primary", "r1"))
+
+    def oauth2(*args, **kwargs):
+        tokens.append("oauth2")
+        return "oauth2", "r2"
+
+    monkeypatch.setattr(target, "get_access_token_oauth2", oauth2)
+
+    def find(session, access_token, **kwargs):
+        if access_token == "primary":
+            clock[0] = 36.0
+            return None, 1, 0
+        return "KQDLX7", 1, 1
+
+    monkeypatch.setattr(target, "find_security_code", find)
+    monkeypatch.setattr(target.time, "monotonic", lambda: clock[0])
+
+    result = target.poll_security_code(
+        credential,
+        not_before=datetime.now(timezone.utc),
+        timeout=60.0,
+        interval=0.01,
+    )
+
+    assert result == ("KQDLX7", 1, 1)
+    assert tokens == ["oauth2"]
 
 
 def test_email_verified_state_recognizes_overview_text() -> None:

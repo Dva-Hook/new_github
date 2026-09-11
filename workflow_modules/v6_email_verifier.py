@@ -18,6 +18,7 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import quote
 
 import requests
 
@@ -38,6 +39,9 @@ from v5_email_verifier import (
 
 
 LOG = logging.getLogger("http_register_v6.email_verifier")
+OAUTH2_COMMON_TOKEN_ENDPOINT = (
+    "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+)
 OVERVIEW_VERIFICATION_BANNER_SELECTOR = (
     "#app > main > section.main-content-section > div > "
     "div.blz-alert.top-banner-alert > meka-notification-banner > div > span > "
@@ -137,6 +141,11 @@ SECURITY_MESSAGE_ENDPOINTS = (
 )
 SECURITY_MESSAGE_PAGE_LIMIT = 5
 SECURITY_MESSAGE_TIME_GRACE = timedelta(minutes=10)
+SECURITY_MESSAGE_REQUEST_TIMEOUT = 10.0
+
+
+class GraphMailPermissionError(RuntimeError):
+    """The refreshed token cannot read Microsoft Graph mail."""
 OVERVIEW_EMAIL_VERIFIED_STATE_JS = r"""return (() => {
   const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
   const isVisible = (node) => {
@@ -536,11 +545,51 @@ def _parse_graph_datetime(value: Any) -> Optional[datetime]:
     return parsed.astimezone(timezone.utc)
 
 
+def get_access_token_oauth2(
+    session: requests.Session, client_id: str, refresh_token: str
+) -> tuple[str, str]:
+    """Refresh using the O2 flow used by the external mailbox reader.
+
+    The compatibility flow uses the ``common`` consumer endpoint and omits
+    ``scope`` so Microsoft reuses the grants attached to the refresh token.
+    It is deliberately separate from the original refresh path and is only
+    used after the primary Graph scan does not produce a code.
+    """
+
+    response = session.post(
+        OAUTH2_COMMON_TOKEN_ENDPOINT,
+        data={
+            "client_id": client_id,
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+        },
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        timeout=20,
+    )
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError("OAuth2 回退刷新返回了无效响应") from exc
+    access_token = str(payload.get("access_token") or "").strip()
+    if not access_token:
+        error = str(payload.get("error") or "unknown_error").strip()
+        description = str(payload.get("error_description") or "").strip()
+        detail = f"{error}: {description[:180]}" if description else error
+        raise RuntimeError(f"OAuth2 回退刷新失败：{detail}")
+    rotated = str(payload.get("refresh_token") or refresh_token).strip()
+    return access_token, rotated
+
+
 def find_security_code(
     session: requests.Session,
     access_token: str,
     *,
     not_before: datetime,
+    deadline: Optional[float] = None,
+    request_timeout: float = SECURITY_MESSAGE_REQUEST_TIMEOUT,
 ) -> tuple[Optional[str], int, int]:
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -549,7 +598,7 @@ def find_security_code(
     }
     params = {
         "$top": "50",
-        "$select": "id,subject,from,receivedDateTime,bodyPreview,body",
+        "$select": "id,subject,from,receivedDateTime,bodyPreview",
         "$orderby": "receivedDateTime desc",
     }
     threshold = not_before.astimezone(timezone.utc)
@@ -564,14 +613,24 @@ def find_security_code(
         pages = 0
         while next_url and pages < SECURITY_MESSAGE_PAGE_LIMIT:
             pages += 1
+            if deadline is not None and time.monotonic() >= deadline:
+                return None, scanned, matching
+            timeout = max(0.5, float(request_timeout))
+            if deadline is not None:
+                timeout = min(timeout, max(0.5, deadline - time.monotonic()))
             response = session.get(
                 next_url,
                 headers=headers,
                 params=params if next_url == endpoint else None,
-                timeout=30,
+                timeout=timeout,
             )
             if response.status_code == 401:
                 raise AccessTokenExpired("Microsoft access token 已过期")
+            if response.status_code == 403:
+                raise GraphMailPermissionError(
+                    "Microsoft Graph 邮箱读取返回 403；当前 OAuth2 凭证未授予 Mail.Read，"
+                    "或 access_token 不是 Microsoft Graph 受众"
+                )
             response.raise_for_status()
             payload = response.json()
             for message in payload.get("value", []):
@@ -599,6 +658,36 @@ def find_security_code(
                 if received is None or received < grace_threshold:
                     continue
                 code = extract_battlenet_security_code(message)
+                if not code and message_id:
+                    detail_url = (
+                        f"{MESSAGES_URL.rstrip('/')}/{quote(message_id, safe='')}"
+                    )
+                    if deadline is not None and time.monotonic() >= deadline:
+                        return None, scanned, matching
+                    detail_timeout = max(0.5, float(request_timeout))
+                    if deadline is not None:
+                        detail_timeout = min(
+                            detail_timeout,
+                            max(0.5, deadline - time.monotonic()),
+                        )
+                    detail_response = session.get(
+                        detail_url,
+                        headers=headers,
+                        params={"$select": "body,bodyPreview"},
+                        timeout=detail_timeout,
+                    )
+                    if detail_response.status_code == 401:
+                        raise AccessTokenExpired("Microsoft access token 已过期")
+                    if detail_response.status_code == 403:
+                        raise GraphMailPermissionError(
+                            "Microsoft Graph 邮箱正文读取返回 403；当前 OAuth2 凭证未授予 Mail.Read"
+                        )
+                    detail_response.raise_for_status()
+                    detail = detail_response.json()
+                    if isinstance(detail, dict):
+                        merged = dict(message)
+                        merged.update(detail)
+                        code = extract_battlenet_security_code(merged)
                 if not code:
                     continue
                 candidate = (received, code, scanned, matching)
@@ -631,6 +720,10 @@ def poll_security_code(
     interval: float = 3.0,
 ) -> tuple[str, int, int]:
     deadline = time.monotonic() + max(1.0, float(timeout))
+    primary_deadline = min(
+        deadline,
+        time.monotonic() + max(30.0, float(timeout) * 0.6),
+    )
     refresh_token = credential.refresh_token
     scanned_total = 0
     matching_total = 0
@@ -641,25 +734,60 @@ def poll_security_code(
             session, credential.client_id, refresh_token
         )
         attempt = 0
+        backend = "primary"
+        phase_deadline = primary_deadline
         while time.monotonic() < deadline:
+            if time.monotonic() >= phase_deadline:
+                if backend == "primary":
+                    LOG.warning(
+                        "主邮箱读取路径未找到安全码，切换 common OAuth2 兼容路径"
+                    )
+                    try:
+                        access_token, refresh_token = get_access_token_oauth2(
+                            session, credential.client_id, refresh_token
+                        )
+                    except (RuntimeError, requests.RequestException) as exc:
+                        LOG.warning(
+                            "common OAuth2 兼容路径刷新失败：%s",
+                            type(exc).__name__,
+                        )
+                        break
+                    backend = "oauth2"
+                    phase_deadline = deadline
+                    attempt = 0
+                    continue
+                break
             attempt += 1
             try:
                 code, scanned, matching = find_security_code(
                     session,
                     access_token,
                     not_before=not_before,
+                    deadline=phase_deadline,
+                    request_timeout=SECURITY_MESSAGE_REQUEST_TIMEOUT,
                 )
             except AccessTokenExpired:
-                access_token, refresh_token = get_access_token(
-                    session, credential.client_id, refresh_token
-                )
+                if backend == "oauth2":
+                    access_token, refresh_token = get_access_token_oauth2(
+                        session, credential.client_id, refresh_token
+                    )
+                else:
+                    access_token, refresh_token = get_access_token(
+                        session, credential.client_id, refresh_token
+                    )
+                continue
+            except GraphMailPermissionError as exc:
+                if backend != "primary":
+                    raise
+                LOG.warning("主邮箱读取路径权限不匹配，切换 common OAuth2：%s", exc)
+                phase_deadline = time.monotonic()
                 continue
             except requests.RequestException as exc:
                 if not _is_retryable_graph_error(exc):
                     raise
-                remaining = deadline - time.monotonic()
+                remaining = phase_deadline - time.monotonic()
                 if remaining <= 0:
-                    break
+                    continue
                 delay = min(max(0.5, float(interval)), remaining)
                 LOG.warning(
                     "读取 Battle.net 安全码暂时失败，第 %s 次将在 %.1f 秒后重试：%s",
@@ -680,7 +808,7 @@ def poll_security_code(
             )
             if code:
                 return code, scanned_total, matching_total
-            remaining = deadline - time.monotonic()
+            remaining = phase_deadline - time.monotonic()
             if remaining > 0:
                 time.sleep(min(float(interval), remaining))
     raise TimeoutError("等待 Battle.net 邮箱安全码超时")

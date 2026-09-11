@@ -75,13 +75,13 @@ def test_o2_client_detects_permission_before_refreshing_messages() -> None:
     assert messages[0]["body"]["content"].startswith("<p>")
 
 
-def test_o2_client_rejects_non_o2_permission_without_echoing_secret() -> None:
+def test_o2_client_rejects_unknown_permission_without_echoing_secret() -> None:
     class Session:
         def post(self, url, **kwargs):
             return _Response(
                 {
                     "success": True,
-                    "token_type": "graph",
+                    "token_type": "unknown",
                     "scope": "User.Read",
                 }
             )
@@ -96,8 +96,51 @@ def test_o2_client_rejects_non_o2_permission_without_echoing_secret() -> None:
         )
 
     message = str(error.value)
-    assert "o2" in message.lower()
+    assert "unknown" in message.lower()
     assert "refresh-token" not in message
+
+
+def test_o2_client_accepts_graph_permission_and_forwards_type() -> None:
+    calls: list[tuple[str, dict[str, str]]] = []
+
+    class Session:
+        def post(self, url, *, json, headers, timeout):
+            calls.append((url, dict(json)))
+            if url.endswith("/detect-permission"):
+                return _Response(
+                    {
+                        "success": True,
+                        "token_type": "graph",
+                        "use_local_ip": True,
+                        "scope": "https://graph.microsoft.com/User.Read",
+                    }
+                )
+            return _Response(
+                {
+                    "success": True,
+                    "data": [
+                        {
+                            "id": "graph-message-1",
+                            "subject": "Your security code",
+                            "from_address": "noreply@battle.net",
+                            "received_time": "2026-09-11T07:27:12Z",
+                            "body_preview": "Your security code: KQDLX7",
+                            "body": "Your security code: KQDLX7",
+                        }
+                    ],
+                }
+            )
+
+    messages = target.O2MailboxClient(
+        Session(), base_url="https://mail.example.test"
+    ).refresh_messages(
+        email="mail@example.com",
+        client_id="client-id",
+        refresh_token="refresh-token",
+    )
+
+    assert calls[1][1]["token_type"] == "graph"
+    assert messages[0]["bodyPreview"] == "Your security code: KQDLX7"
 
 
 def test_o2_message_received_time_is_preserved_for_datetime_filters() -> None:

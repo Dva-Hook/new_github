@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
-"""O2 mailbox-reader compatibility client.
+"""External mailbox-reader compatibility client.
 
 The normal verification path reads Microsoft Graph directly.  This module is
 only used after that path times out or cannot read mail.  It deliberately
 normalizes the external reader response to the small Graph-shaped message
-contract consumed by the existing Battle.net link/code extractors.
+contract consumed by the existing Battle.net link/code extractors.  The
+service can route a credential through either its ``o2`` or ``graph`` backend;
+the detected backend must be forwarded unchanged on the refresh request.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ PERMISSION_PATH = "/detect-permission"
 REFRESH_PATH = "/api/emails/refresh"
 DEFAULT_TIMEOUT = 20.0
 DEFAULT_USER_AGENT = "BattleNetO2MailboxFallback/1.0"
+SUPPORTED_TOKEN_TYPES = frozenset({"o2", "graph"})
 
 
 class O2MailboxError(RuntimeError):
@@ -184,14 +187,14 @@ class O2MailboxClient:
             },
         )
         if payload.get("success") is not True:
-            raise O2PermissionError("O2 邮箱服务未接受该凭证")
+            raise O2PermissionError("邮箱服务未接受该凭证")
         token_type = _text(payload.get("token_type")).casefold()
-        if token_type != "o2":
+        if token_type not in SUPPORTED_TOKEN_TYPES:
             raise O2PermissionError(
-                f"O2 邮箱服务返回了不支持的 token_type：{token_type or 'empty'}"
+                f"邮箱服务返回了不支持的 token_type：{token_type or 'empty'}"
             )
         permission = O2Permission(
-            token_type="o2",
+            token_type=token_type,
             scope=_text(payload.get("scope")),
             use_local_ip=bool(payload.get("use_local_ip")),
         )

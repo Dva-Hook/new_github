@@ -165,8 +165,8 @@ def _answer_from_result(result: dict[str, Any]) -> int:
         raise RuntimeError(
             f"YesCaptcha 返回了非整数答案：{objects[0]!r}"
         ) from exc
-    if not 0 <= answer <= 11:
-        raise RuntimeError(f"YesCaptcha 答案序号超出 0..11：{answer}")
+    if not 0 <= answer <= 20:
+        raise RuntimeError(f"YesCaptcha 答案序号超出 0..20：{answer}")
     return answer
 
 

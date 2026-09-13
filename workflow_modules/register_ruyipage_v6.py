@@ -44,6 +44,8 @@ def _map_v6_environment() -> None:
         target = f"V5_{suffix}"
         if source in os.environ:
             os.environ[target] = os.environ[source]
+    if "V6_TWOCAPTCHA_API_KEY" in os.environ:
+        os.environ["TWOCAPTCHA_API_KEY"] = os.environ["V6_TWOCAPTCHA_API_KEY"]
 
 
 def _setup_v6_logging(path: Path) -> None:

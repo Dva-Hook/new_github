@@ -48,6 +48,23 @@ def test_v6_parser_names_the_v6_pool_file() -> None:
     assert "Email_registing.txt" not in action.help
 
 
+def test_v6_parser_supports_twocaptcha() -> None:
+    parser = v6._build_parser_v6()
+    solver_action = next(
+        item for item in parser._actions if item.dest == "solver"
+    )
+
+    assert "twocaptcha" in solver_action.choices
+
+
+def test_v6_configuration_requires_twocaptcha_key() -> None:
+    parser = v6._build_parser_v6()
+    args = parser.parse_args(["--solver", "twocaptcha"])
+
+    with pytest.raises(ValueError, match="TWOCAPTCHA_API_KEY"):
+        v6.v5.validate_configuration(args)
+
+
 def test_v6_parser_verifies_email_by_default(monkeypatch) -> None:
     monkeypatch.delenv("V6_VERIFY_EMAIL", raising=False)
     monkeypatch.delenv("V5_VERIFY_EMAIL", raising=False)

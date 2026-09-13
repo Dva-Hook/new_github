@@ -42,6 +42,20 @@ def test_v6_workflow_uses_v6_pool_runner_and_output_contract() -> None:
     assert "V5_EMAIL_POOL_FILE: Email_registing.txt" not in text
 
 
+def test_v6_workflow_exposes_twocaptcha_secret_and_solver_choice() -> None:
+    workflow = yaml.load(
+        WORKFLOW.read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+    inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+
+    assert "twocaptcha_key" in inputs
+    assert "2Captcha" in inputs["solver"]["options"]
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "TWOCAPTCHA_API_KEY" in text
+    assert '"2Captcha": "twocaptcha"' in text
+
+
 def test_v6_workflow_retains_unique_matrix_allocation_and_serial_pool_runs() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
 

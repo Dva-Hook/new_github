@@ -43,6 +43,8 @@ DEFAULT_YESCAPTCHA_API_URL = "https://api.yescaptcha.com/createTask"
 DEFAULT_CAPMONSTER_CREATE_URL = "https://api.capmonster.cloud/createTask"
 DEFAULT_CAPMONSTER_RESULT_URL = "https://api.capmonster.cloud/getTaskResult"
 DEFAULT_CAPMONSTER_USER_AGENT_URL = "https://capmonster.cloud/api/useragent/actual"
+DEFAULT_TWOCAPTCHA_CREATE_URL = "https://api.2captcha.com/createTask"
+DEFAULT_TWOCAPTCHA_RESULT_URL = "https://api.2captcha.com/getTaskResult"
 DEFAULT_PROXY_DIRECT_HOSTS = (
     "blz-contentstack-assets.akamaized.net",
     "forge.akamaized.net",
@@ -349,7 +351,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--solver",
-        choices=("v11", "yescaptcha", "capmonster"),
+        choices=("v11", "yescaptcha", "capmonster", "twocaptcha"),
         default=os.environ.get("V5_SOLVER", "v11").lower(),
     )
     parser.add_argument(
@@ -446,6 +448,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--capmonster-timeout", type=float, default=300.0)
     parser.add_argument("--capmonster-poll-interval", type=float, default=2.5)
     parser.add_argument(
+        "--twocaptcha-key", default=os.environ.get("TWOCAPTCHA_API_KEY", "")
+    )
+    parser.add_argument(
+        "--twocaptcha-create-url", default=DEFAULT_TWOCAPTCHA_CREATE_URL
+    )
+    parser.add_argument(
+        "--twocaptcha-result-url", default=DEFAULT_TWOCAPTCHA_RESULT_URL
+    )
+    parser.add_argument("--twocaptcha-timeout", type=float, default=300.0)
+    parser.add_argument("--twocaptcha-poll-interval", type=float, default=2.5)
+    parser.add_argument(
         "--proxy-direct-hosts",
         default=os.environ.get(
             "V5_PROXY_DIRECT_HOSTS",
@@ -476,8 +489,14 @@ def validate_configuration(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError(
             "选择 CapMonster 求解时必须提供 CAPMONSTER_API_KEY"
         )
+    if args.solver == "twocaptcha" and not str(args.twocaptcha_key).strip():
+        raise ValueError(
+            "选择 2Captcha 求解时必须提供 TWOCAPTCHA_API_KEY"
+        )
     if args.capmonster_poll_interval <= 0 or args.capmonster_timeout <= 0:
         raise ValueError("CapMonster 轮询间隔和超时时间必须为正数")
+    if args.twocaptcha_poll_interval <= 0 or args.twocaptcha_timeout <= 0:
+        raise ValueError("2Captcha 轮询间隔和超时时间必须为正数")
     if args.yescaptcha_timeout <= 0:
         raise ValueError("YesCaptcha 超时时间必须为正数")
     if args.email_source == "pool" and int(args.email_pool_index) < 1:
@@ -500,7 +519,7 @@ def validate_configuration(args: argparse.Namespace) -> dict[str, Any]:
         "proxyDirectHosts": list(proxy_direct_hosts),
         "capmonsterProxyMode": (
             args.capmonster_proxy_mode
-            if args.solver == "capmonster"
+            if args.solver in {"capmonster", "twocaptcha"}
             else "not-applicable"
         ),
         "apiKeyConfigured": (
@@ -510,7 +529,11 @@ def validate_configuration(args: argparse.Namespace) -> dict[str, Any]:
                 str(
                     args.yescaptcha_key
                     if args.solver == "yescaptcha"
-                    else args.capmonster_key
+                    else (
+                        args.capmonster_key
+                        if args.solver == "capmonster"
+                        else args.twocaptcha_key
+                    )
                 ).strip()
             )
         ),
@@ -554,6 +577,17 @@ def _capmonster_proxy_fields(proxy: v4.ProxySettings) -> dict[str, Any]:
     if parsed.username is not None:
         fields["proxyLogin"] = unquote(parsed.username)
         fields["proxyPassword"] = unquote(parsed.password or "")
+    return fields
+
+
+def _twocaptcha_proxy_fields(proxy: v4.ProxySettings) -> dict[str, Any]:
+    """Translate the selected route to the 2Captcha proxy task fields."""
+
+    fields = _capmonster_proxy_fields(proxy)
+    # 2Captcha documents http, socks4 and socks5 task proxy types.  Treat an
+    # HTTPS proxy endpoint as an HTTP CONNECT proxy for this API field.
+    if fields.get("proxyType") == "https":
+        fields["proxyType"] = "http"
     return fields
 
 
@@ -794,6 +828,229 @@ def solve_with_capmonster(
     )
     raise TimeoutError(
         f"CapMonster 任务 {task_id} 在 {args.capmonster_timeout} 秒后超时"
+    )
+
+
+def solve_with_twocaptcha(
+    context: Mapping[str, Any],
+    args: argparse.Namespace,
+    out: Path,
+    proxy: v4.ProxySettings,
+) -> dict[str, Any]:
+    """Create and poll a 2Captcha Arkose Labs FunCaptcha task."""
+
+    solver_started = time.perf_counter()
+    blob = str(context.get("blob") or "")
+    site_key = str(context.get("siteKey") or v4.DEFAULT_SITE_KEY)
+    surl = str(context.get("surl") or v4.DEFAULT_SURL)
+    website_url = str(context.get("websiteURL") or args.entry_url)
+    user_agent = str(
+        args.protocol_user_agent
+        or context.get("userAgent")
+        or DEFAULT_WINDOWS_USER_AGENT
+    )
+    requested_proxy = str(args.capmonster_proxy_mode).lower() == "proxy"
+    use_proxy = requested_proxy and proxy.enabled
+    task: dict[str, Any] = {
+        "type": "FunCaptchaTask" if use_proxy else "FunCaptchaTaskProxyless",
+        "websiteURL": website_url,
+        "websitePublicKey": site_key,
+        "userAgent": user_agent,
+    }
+    if blob:
+        task["data"] = json.dumps({"blob": blob}, separators=(",", ":"))
+    surl_host = _diagnostic_host(surl)
+    if surl_host and surl_host != "client-api.arkoselabs.com":
+        task["funcaptchaApiJSSubdomain"] = surl_host
+    if use_proxy:
+        task.update(_twocaptcha_proxy_fields(proxy))
+    task_mode = "proxy" if use_proxy else "proxyless"
+    LOG.info(
+        "2Captcha 任务：类型=%s，模式=%s，线路=%s",
+        task["type"],
+        task_mode,
+        proxy.display if use_proxy else "2Captcha 自身网络",
+    )
+    _diagnostic_event(
+        out,
+        "twocaptcha_create_start",
+        solver_started,
+        solver="twocaptcha",
+        taskType=task["type"],
+        proxyMode=task_mode,
+        proxyConfigured=bool(use_proxy),
+        blobLength=len(blob),
+        blobSha256=_diagnostic_digest(blob),
+        siteKeySha256=_diagnostic_digest(site_key),
+        surlHost=surl_host,
+        websiteHost=_diagnostic_host(website_url),
+        userAgentSha256=_diagnostic_digest(user_agent),
+    )
+
+    session = requests.Session()
+    session.headers.update({"Content-Type": "application/json"})
+    try:
+        create_response = session.post(
+            args.twocaptcha_create_url,
+            json={"clientKey": str(args.twocaptcha_key).strip(), "task": task},
+            timeout=20,
+        )
+        create_response.raise_for_status()
+        created = create_response.json()
+    except Exception as exc:
+        _diagnostic_event(
+            out,
+            "twocaptcha_create_error",
+            solver_started,
+            solver="twocaptcha",
+            errorType=type(exc).__name__,
+        )
+        raise
+    if not isinstance(created, Mapping):
+        raise RuntimeError("2Captcha 创建任务返回了非对象 JSON")
+    write_json(
+        out / "twocaptcha_create_response.json",
+        _redacted_provider_response(created),
+    )
+    task_id = created.get("taskId")
+    if not task_id or int(created.get("errorId") or 0):
+        _diagnostic_event(
+            out,
+            "twocaptcha_create_failed",
+            solver_started,
+            solver="twocaptcha",
+            providerErrorId=int(created.get("errorId") or 0),
+            errorCodePresent=bool(created.get("errorCode")),
+        )
+        raise RuntimeError(
+            f"2Captcha 创建任务失败：错误代码={created.get('errorCode')}，"
+            f"错误说明={created.get('errorDescription')}"
+        )
+    _diagnostic_event(
+        out,
+        "twocaptcha_create_response",
+        solver_started,
+        solver="twocaptcha",
+        httpStatus=int(create_response.status_code),
+        providerErrorId=int(created.get("errorId") or 0),
+        hasTaskId=True,
+        responseKeys=sorted(str(key) for key in created.keys()),
+    )
+
+    deadline = time.monotonic() + float(args.twocaptcha_timeout)
+    polls = 0
+    last: dict[str, Any] = {}
+    last_status = ""
+    while time.monotonic() < deadline:
+        polls += 1
+        try:
+            response = session.post(
+                args.twocaptcha_result_url,
+                json={
+                    "clientKey": str(args.twocaptcha_key).strip(),
+                    "taskId": task_id,
+                },
+                timeout=15,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except Exception as exc:
+            _diagnostic_event(
+                out,
+                "twocaptcha_poll_error",
+                solver_started,
+                solver="twocaptcha",
+                poll=polls,
+                errorType=type(exc).__name__,
+            )
+            raise
+        if not isinstance(payload, Mapping):
+            raise RuntimeError("2Captcha 轮询返回了非对象 JSON")
+        last = dict(payload)
+        status = str(last.get("status") or "")
+        if status != last_status or polls == 1 or polls % 10 == 0:
+            _diagnostic_event(
+                out,
+                "twocaptcha_poll",
+                solver_started,
+                solver="twocaptcha",
+                poll=polls,
+                httpStatus=int(response.status_code),
+                providerStatus=status,
+                providerErrorId=int(last.get("errorId") or 0),
+                errorCodePresent=bool(last.get("errorCode")),
+            )
+            last_status = status
+        if status == "ready":
+            token = str((last.get("solution") or {}).get("token") or "")
+            write_json(
+                out / "twocaptcha_result.json",
+                _redacted_provider_response(last),
+            )
+            if not token:
+                _diagnostic_event(
+                    out,
+                    "twocaptcha_ready_without_token",
+                    solver_started,
+                    solver="twocaptcha",
+                    poll=polls,
+                )
+                raise RuntimeError("2Captcha 已返回 ready，但缺少 solution.token")
+            _diagnostic_event(
+                out,
+                "twocaptcha_ready",
+                solver_started,
+                solver="twocaptcha",
+                poll=polls,
+                tokenPresent=True,
+                tokenLength=len(token),
+                tokenSha256=_diagnostic_digest(token),
+            )
+            return {
+                "ok": True,
+                "token": token,
+                "actions": [],
+                "provider": "2captcha",
+                "taskType": task["type"],
+                "proxyMode": task_mode,
+                "proxyModeRequested": args.capmonster_proxy_mode,
+                "taskId": task_id,
+                "polls": polls,
+            }
+        if int(last.get("errorId") or 0) or status in {"error", "failed"}:
+            write_json(
+                out / "twocaptcha_result.json",
+                _redacted_provider_response(last),
+            )
+            _diagnostic_event(
+                out,
+                "twocaptcha_failed",
+                solver_started,
+                solver="twocaptcha",
+                poll=polls,
+                providerStatus=status,
+                providerErrorId=int(last.get("errorId") or 0),
+                errorCodePresent=bool(last.get("errorCode")),
+            )
+            raise RuntimeError(
+                f"2Captcha 任务失败：错误代码={last.get('errorCode')}，"
+                f"错误说明={last.get('errorDescription')}"
+            )
+        time.sleep(float(args.twocaptcha_poll_interval))
+    write_json(
+        out / "twocaptcha_result.json",
+        _redacted_provider_response(last),
+    )
+    _diagnostic_event(
+        out,
+        "twocaptcha_timeout",
+        solver_started,
+        solver="twocaptcha",
+        poll=polls,
+        lastProviderStatus=str(last.get("status") or ""),
+    )
+    raise TimeoutError(
+        f"2Captcha 任务 {task_id} 在 {args.twocaptcha_timeout} 秒后超时"
     )
 
 
@@ -1717,7 +1974,7 @@ def main() -> int:
             resumedToken=bool(token),
             capmonsterProxyMode=(
                 args.capmonster_proxy_mode
-                if args.solver == "capmonster"
+                if args.solver in {"capmonster", "twocaptcha"}
                 else "not-applicable"
             ),
         )
@@ -1733,6 +1990,10 @@ def main() -> int:
             elif args.solver == "capmonster":
                 health = {"ok": True, "status": "external-provider"}
                 solve_result = solve_with_capmonster(arkose, args, out, proxy)
+                token = str(solve_result["token"])
+            elif args.solver == "twocaptcha":
+                health = {"ok": True, "status": "external-provider"}
+                solve_result = solve_with_twocaptcha(arkose, args, out, proxy)
                 token = str(solve_result["token"])
             else:
                 if args.solver == "v11":
@@ -1966,12 +2227,12 @@ def main() -> int:
                         solve_result.get("proxyMode")
                         or args.capmonster_proxy_mode
                     )
-                    if args.solver == "capmonster"
+                    if args.solver in {"capmonster", "twocaptcha"}
                     else "not-applicable"
                 ),
                 "capmonsterProxyModeRequested": (
                     args.capmonster_proxy_mode
-                    if args.solver == "capmonster"
+                    if args.solver in {"capmonster", "twocaptcha"}
                     else "not-applicable"
                 ),
                 "capmonsterUserAgent": capmonster_user_agent_info,

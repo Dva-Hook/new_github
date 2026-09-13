@@ -27,6 +27,7 @@ on:
           - "本地 V11"
           - "YesCaptcha"
           - "CapMonster"
+          - "2Captcha"
       yescaptcha_key:
         description: "YesCaptcha 密钥（已配置仓库 Secret 时留空）"
         required: false
@@ -37,8 +38,13 @@ on:
         required: false
         default: ""
         type: string
+      twocaptcha_key:
+        description: "2Captcha 密钥（已配置仓库 Secret 时留空）"
+        required: false
+        default: ""
+        type: string
       capmonster_proxy:
-        description: "是否把当前注册代理传给 CapMonster（仅 CapMonster 生效）"
+        description: "是否把当前注册代理传给 CapMonster 或 2Captcha"
         required: true
         default: "传代理"
         type: choice
@@ -124,6 +130,7 @@ jobs:
           EMAIL_POOL_FILE: "Email_registing_v6.txt"
           YESCAPTCHA_API_KEY: ${{ secrets.YESCAPTCHA_API_KEY || inputs.yescaptcha_key }}
           CAPMONSTER_API_KEY: ${{ secrets.CAPMONSTER_API_KEY || inputs.capmonster_key }}
+          TWOCAPTCHA_API_KEY: ${{ secrets.TWOCAPTCHA_API_KEY || inputs.twocaptcha_key }}
         run: |
           python3 - <<'PY'
           import json
@@ -184,6 +191,7 @@ jobs:
               "本地 V11": "v11",
               "YesCaptcha": "yescaptcha",
               "CapMonster": "capmonster",
+              "2Captcha": "twocaptcha",
           }
           browser_map = {"RuyiPage": "ruyipage", "CloakBrowser": "cloakbrowser"}
           network_map = {"直连": "direct", "代理": "proxy"}
@@ -203,13 +211,16 @@ jobs:
               raise SystemExit(f"不支持的工作流选项: {exc.args[0]}") from exc
           yescaptcha_key = os.environ.get("YESCAPTCHA_API_KEY", "").strip()
           capmonster_key = os.environ.get("CAPMONSTER_API_KEY", "").strip()
-          for value in (yescaptcha_key, capmonster_key):
+          twocaptcha_key = os.environ.get("TWOCAPTCHA_API_KEY", "").strip()
+          for value in (yescaptcha_key, capmonster_key, twocaptcha_key):
               if value:
                   print(f"::add-mask::{value}")
           if solver == "yescaptcha" and not yescaptcha_key:
               raise SystemExit("YesCaptcha 模式需要仓库 Secret 或手动输入密钥")
           if solver == "capmonster" and not capmonster_key:
               raise SystemExit("CapMonster 模式需要仓库 Secret 或手动输入密钥")
+          if solver == "twocaptcha" and not twocaptcha_key:
+              raise SystemExit("2Captcha 模式需要仓库 Secret 或手动输入密钥")
           if network == "proxy":
               root = Path.cwd().resolve()
               proxy_path = (root / os.environ["PROXY_FILE"]).resolve()
@@ -541,17 +552,20 @@ jobs:
           fi
 
       - name: 隐藏打码平台密钥
-        if: needs.prepare.outputs.solver == 'yescaptcha' || needs.prepare.outputs.solver == 'capmonster'
+        if: needs.prepare.outputs.solver == 'yescaptcha' || needs.prepare.outputs.solver == 'capmonster' || needs.prepare.outputs.solver == 'twocaptcha'
         env:
           SOLVER_MODE: ${{ needs.prepare.outputs.solver }}
           YESCAPTCHA_API_KEY: ${{ secrets.YESCAPTCHA_API_KEY || inputs.yescaptcha_key }}
           CAPMONSTER_API_KEY: ${{ secrets.CAPMONSTER_API_KEY || inputs.capmonster_key }}
+          TWOCAPTCHA_API_KEY: ${{ secrets.TWOCAPTCHA_API_KEY || inputs.twocaptcha_key }}
         run: |
           set -euo pipefail
           if [ "$SOLVER_MODE" = "yescaptcha" ]; then
             provider_key="$YESCAPTCHA_API_KEY"
-          else
+          elif [ "$SOLVER_MODE" = "capmonster" ]; then
             provider_key="$CAPMONSTER_API_KEY"
+          else
+            provider_key="$TWOCAPTCHA_API_KEY"
           fi
           test -n "$provider_key"
           echo "::add-mask::$provider_key"
@@ -584,6 +598,7 @@ jobs:
           RANK_V11_URL: http://127.0.0.1:8765
           YESCAPTCHA_API_KEY: ${{ secrets.YESCAPTCHA_API_KEY || inputs.yescaptcha_key }}
           CAPMONSTER_API_KEY: ${{ secrets.CAPMONSTER_API_KEY || inputs.capmonster_key }}
+          TWOCAPTCHA_API_KEY: ${{ secrets.TWOCAPTCHA_API_KEY || inputs.twocaptcha_key }}
           V6_CAPMONSTER_PROXY_MODE: ${{ needs.prepare.outputs.capmonster_proxy_mode }}
           V6_STATIC_CACHE_DIR: ${{ github.workspace }}/.cache/v5_public_static
           V6_EMAIL_BROWSER_CACHE_DIR: ${{ github.workspace }}/.cache/v5_email_browser_profile

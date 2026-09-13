@@ -56,6 +56,20 @@ def test_v6_workflow_exposes_twocaptcha_secret_and_solver_choice() -> None:
     assert '"2Captcha": "twocaptcha"' in text
 
 
+def test_v6_workflow_exposes_solvecaptcha_secret_and_solver_choice() -> None:
+    workflow = yaml.load(
+        WORKFLOW.read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+    inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+
+    assert "solvecaptcha_key" in inputs
+    assert "SolveCaptcha" in inputs["solver"]["options"]
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "SOLVECAPTCHA_API_KEY" in text
+    assert '"SolveCaptcha": "solvecaptcha"' in text
+
+
 def test_v6_workflow_retains_unique_matrix_allocation_and_serial_pool_runs() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
 
@@ -211,3 +225,11 @@ def test_v6_registration_shell_block_has_valid_bash_syntax() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
+
+
+def test_v6_registration_shell_stops_retry_after_runner_signal() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+
+    assert "trap 'handle_runner_signal" in text
+    assert "interrupted_by_runner.txt" in text
+    assert 'if [ "$last_rc" -eq 130 ] || [ "$last_rc" -eq 143 ]; then' in text

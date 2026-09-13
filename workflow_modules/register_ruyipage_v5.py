@@ -45,6 +45,8 @@ DEFAULT_CAPMONSTER_RESULT_URL = "https://api.capmonster.cloud/getTaskResult"
 DEFAULT_CAPMONSTER_USER_AGENT_URL = "https://capmonster.cloud/api/useragent/actual"
 DEFAULT_TWOCAPTCHA_CREATE_URL = "https://api.2captcha.com/createTask"
 DEFAULT_TWOCAPTCHA_RESULT_URL = "https://api.2captcha.com/getTaskResult"
+DEFAULT_SOLVECAPTCHA_CREATE_URL = "https://api.solvecaptcha.com/in.php"
+DEFAULT_SOLVECAPTCHA_RESULT_URL = "https://api.solvecaptcha.com/res.php"
 DEFAULT_PROXY_DIRECT_HOSTS = (
     "blz-contentstack-assets.akamaized.net",
     "forge.akamaized.net",
@@ -351,7 +353,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--solver",
-        choices=("v11", "yescaptcha", "capmonster", "twocaptcha"),
+        choices=("v11", "yescaptcha", "capmonster", "twocaptcha", "solvecaptcha"),
         default=os.environ.get("V5_SOLVER", "v11").lower(),
     )
     parser.add_argument(
@@ -459,6 +461,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--twocaptcha-timeout", type=float, default=300.0)
     parser.add_argument("--twocaptcha-poll-interval", type=float, default=2.5)
     parser.add_argument(
+        "--solvecaptcha-key", default=os.environ.get("SOLVECAPTCHA_API_KEY", "")
+    )
+    parser.add_argument(
+        "--solvecaptcha-create-url", default=DEFAULT_SOLVECAPTCHA_CREATE_URL
+    )
+    parser.add_argument(
+        "--solvecaptcha-result-url", default=DEFAULT_SOLVECAPTCHA_RESULT_URL
+    )
+    parser.add_argument("--solvecaptcha-timeout", type=float, default=300.0)
+    parser.add_argument("--solvecaptcha-poll-interval", type=float, default=5.0)
+    parser.add_argument(
         "--proxy-direct-hosts",
         default=os.environ.get(
             "V5_PROXY_DIRECT_HOSTS",
@@ -493,10 +506,16 @@ def validate_configuration(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError(
             "选择 2Captcha 求解时必须提供 TWOCAPTCHA_API_KEY"
         )
+    if args.solver == "solvecaptcha" and not str(args.solvecaptcha_key).strip():
+        raise ValueError(
+            "选择 SolveCaptcha 求解时必须提供 SOLVECAPTCHA_API_KEY"
+        )
     if args.capmonster_poll_interval <= 0 or args.capmonster_timeout <= 0:
         raise ValueError("CapMonster 轮询间隔和超时时间必须为正数")
     if args.twocaptcha_poll_interval <= 0 or args.twocaptcha_timeout <= 0:
         raise ValueError("2Captcha 轮询间隔和超时时间必须为正数")
+    if args.solvecaptcha_poll_interval <= 0 or args.solvecaptcha_timeout <= 0:
+        raise ValueError("SolveCaptcha 轮询间隔和超时时间必须为正数")
     if args.yescaptcha_timeout <= 0:
         raise ValueError("YesCaptcha 超时时间必须为正数")
     if args.email_source == "pool" and int(args.email_pool_index) < 1:
@@ -519,7 +538,7 @@ def validate_configuration(args: argparse.Namespace) -> dict[str, Any]:
         "proxyDirectHosts": list(proxy_direct_hosts),
         "capmonsterProxyMode": (
             args.capmonster_proxy_mode
-            if args.solver in {"capmonster", "twocaptcha"}
+            if args.solver in {"capmonster", "twocaptcha", "solvecaptcha"}
             else "not-applicable"
         ),
         "apiKeyConfigured": (
@@ -532,7 +551,11 @@ def validate_configuration(args: argparse.Namespace) -> dict[str, Any]:
                     else (
                         args.capmonster_key
                         if args.solver == "capmonster"
-                        else args.twocaptcha_key
+                        else (
+                            args.twocaptcha_key
+                            if args.solver == "twocaptcha"
+                            else args.solvecaptcha_key
+                        )
                     )
                 ).strip()
             )
@@ -589,6 +612,281 @@ def _twocaptcha_proxy_fields(proxy: v4.ProxySettings) -> dict[str, Any]:
     if fields.get("proxyType") == "https":
         fields["proxyType"] = "http"
     return fields
+
+
+def _solvecaptcha_proxy_fields(proxy: v4.ProxySettings) -> dict[str, Any]:
+    """Translate the selected route to SolveCaptcha's proxy form fields."""
+
+    if not proxy.enabled:
+        return {}
+    parsed = urlsplit(str(proxy.url or ""))
+    proxy_type = str(proxy.scheme or parsed.scheme or "http").lower()
+    if proxy_type == "socks5h":
+        proxy_type = "socks5"
+    if proxy_type not in {"http", "https", "socks4", "socks5"}:
+        raise ValueError(f"SolveCaptcha 不支持此代理协议: {proxy_type}")
+    address = str(proxy.host or parsed.hostname or "").strip()
+    port = int(proxy.port or parsed.port or 0)
+    if not address or not 1 <= port <= 65535:
+        raise ValueError("所选代理没有有效的地址和端口")
+    host = f"[{address}]" if ":" in address and not address.startswith("[") else address
+    username = unquote(parsed.username or "") if parsed.username is not None else ""
+    password = unquote(parsed.password or "") if parsed.password is not None else ""
+    proxy_value = f"{host}:{port}"
+    if parsed.username is not None:
+        proxy_value = f"{username}:{password}@{proxy_value}"
+    return {"proxytype": proxy_type.upper(), "proxy": proxy_value}
+
+
+def _parse_solvecaptcha_response(response: Any) -> dict[str, Any]:
+    """Normalize SolveCaptcha's JSON and legacy ``OK|value`` responses."""
+
+    try:
+        payload = response.json()
+    except Exception:
+        raw = str(getattr(response, "text", "") or "").strip()
+        if "|" in raw:
+            status, request = raw.split("|", 1)
+            return {
+                "status": 1 if status.strip().upper() == "OK" else 0,
+                "request": request,
+            }
+        return {"status": 0, "request": raw}
+    if isinstance(payload, Mapping):
+        return dict(payload)
+    return {"status": 0, "request": str(payload or "")}
+
+
+def _redacted_solvecaptcha_response(
+    payload: Mapping[str, Any], *, token_response: bool = False
+) -> dict[str, Any]:
+    """Persist SolveCaptcha metadata without writing a returned token."""
+
+    clean = dict(payload)
+    if token_response and "request" in clean:
+        request = str(clean.get("request") or "")
+        clean["request"] = "<redacted>" if request else ""
+        clean["requestLength"] = len(request)
+        clean["requestSha256"] = _diagnostic_digest(request)
+    return clean
+
+
+def solve_with_solvecaptcha(
+    context: Mapping[str, Any],
+    args: argparse.Namespace,
+    out: Path,
+    proxy: v4.ProxySettings,
+) -> dict[str, Any]:
+    """Create and poll a SolveCaptcha Arkose Labs FunCaptcha task."""
+
+    solver_started = time.perf_counter()
+    blob = str(context.get("blob") or "")
+    site_key = str(context.get("siteKey") or v4.DEFAULT_SITE_KEY)
+    surl = str(context.get("surl") or v4.DEFAULT_SURL)
+    website_url = str(context.get("websiteURL") or args.entry_url)
+    user_agent = str(
+        args.protocol_user_agent
+        or context.get("userAgent")
+        or DEFAULT_WINDOWS_USER_AGENT
+    )
+    requested_proxy = str(args.capmonster_proxy_mode).lower() == "proxy"
+    use_proxy = requested_proxy and proxy.enabled
+    form_data: dict[str, Any] = {
+        "key": str(args.solvecaptcha_key).strip(),
+        "method": "funcaptcha",
+        "publickey": site_key,
+        "surl": surl,
+        "pageurl": website_url,
+        "userAgent": user_agent,
+        "json": 1,
+    }
+    if blob:
+        form_data["data"] = json.dumps({"blob": blob}, separators=(",", ":"))
+    if use_proxy:
+        form_data.update(_solvecaptcha_proxy_fields(proxy))
+    task_mode = "proxy" if use_proxy else "proxyless"
+    LOG.info(
+        "SolveCaptcha 任务：类型=funcaptcha，模式=%s，线路=%s",
+        task_mode,
+        proxy.display if use_proxy else "SolveCaptcha 自身网络",
+    )
+    _diagnostic_event(
+        out,
+        "solvecaptcha_create_start",
+        solver_started,
+        solver="solvecaptcha",
+        method="funcaptcha",
+        proxyMode=task_mode,
+        proxyConfigured=bool(use_proxy),
+        blobLength=len(blob),
+        blobSha256=_diagnostic_digest(blob),
+        siteKeySha256=_diagnostic_digest(site_key),
+        surlHost=_diagnostic_host(surl),
+        websiteHost=_diagnostic_host(website_url),
+        userAgentSha256=_diagnostic_digest(user_agent),
+    )
+
+    session = requests.Session()
+    try:
+        create_response = session.post(
+            args.solvecaptcha_create_url,
+            data=form_data,
+            timeout=20,
+        )
+        create_response.raise_for_status()
+        created = _parse_solvecaptcha_response(create_response)
+    except Exception as exc:
+        _diagnostic_event(
+            out,
+            "solvecaptcha_create_error",
+            solver_started,
+            solver="solvecaptcha",
+            errorType=type(exc).__name__,
+        )
+        raise
+    write_json(
+        out / "solvecaptcha_create_response.json",
+        _redacted_solvecaptcha_response(created),
+    )
+    task_id = str(created.get("request") or "").strip()
+    create_status = int(created.get("status") or 0)
+    _diagnostic_event(
+        out,
+        "solvecaptcha_create_response",
+        solver_started,
+        solver="solvecaptcha",
+        httpStatus=int(create_response.status_code),
+        providerStatus=create_status,
+        hasTaskId=bool(task_id and create_status == 1),
+        responseKeys=sorted(str(key) for key in created.keys()),
+    )
+    if create_status != 1 or not task_id:
+        _diagnostic_event(
+            out,
+            "solvecaptcha_create_failed",
+            solver_started,
+            solver="solvecaptcha",
+            providerStatus=create_status,
+            errorCodePresent=bool(task_id),
+        )
+        raise RuntimeError(f"SolveCaptcha 创建任务失败：{task_id or '未知错误'}")
+    LOG.info("SolveCaptcha 任务已创建，blob 长度=%s", len(blob))
+
+    deadline = time.monotonic() + float(args.solvecaptcha_timeout)
+    polls = 0
+    last: dict[str, Any] = {}
+    last_status = ""
+    while time.monotonic() < deadline:
+        polls += 1
+        try:
+            result_response = session.post(
+                args.solvecaptcha_result_url,
+                data={
+                    "key": str(args.solvecaptcha_key).strip(),
+                    "action": "get",
+                    "id": task_id,
+                    "json": 1,
+                },
+                timeout=15,
+            )
+            result_response.raise_for_status()
+            last = _parse_solvecaptcha_response(result_response)
+        except Exception as exc:
+            _diagnostic_event(
+                out,
+                "solvecaptcha_poll_error",
+                solver_started,
+                solver="solvecaptcha",
+                poll=polls,
+                errorType=type(exc).__name__,
+            )
+            raise
+        status = int(last.get("status") or 0)
+        request_value = str(last.get("request") or "").strip()
+        status_text = str(status)
+        if status_text != last_status or polls == 1 or polls % 10 == 0:
+            _diagnostic_event(
+                out,
+                "solvecaptcha_poll",
+                solver_started,
+                solver="solvecaptcha",
+                poll=polls,
+                httpStatus=int(result_response.status_code),
+                providerStatus=status,
+                notReady=request_value.upper()
+                in {"CAPCHA_NOT_READY", "CAPTCHA_NOT_READY"},
+            )
+            last_status = status_text
+        if status == 1:
+            token = request_value
+            write_json(
+                out / "solvecaptcha_result.json",
+                _redacted_solvecaptcha_response(last, token_response=True),
+            )
+            if not token:
+                _diagnostic_event(
+                    out,
+                    "solvecaptcha_ready_without_token",
+                    solver_started,
+                    solver="solvecaptcha",
+                    poll=polls,
+                )
+                raise RuntimeError("SolveCaptcha 已返回成功，但缺少 token")
+            _diagnostic_event(
+                out,
+                "solvecaptcha_ready",
+                solver_started,
+                solver="solvecaptcha",
+                poll=polls,
+                tokenPresent=True,
+                tokenLength=len(token),
+                tokenSha256=_diagnostic_digest(token),
+            )
+            return {
+                "ok": True,
+                "token": token,
+                "actions": [],
+                "provider": "solvecaptcha",
+                "proxyMode": task_mode,
+                "proxyModeRequested": args.capmonster_proxy_mode,
+                "taskId": task_id,
+                "polls": polls,
+            }
+        if request_value.upper() not in {
+            "CAPCHA_NOT_READY",
+            "CAPTCHA_NOT_READY",
+            "",
+        }:
+            write_json(
+                out / "solvecaptcha_result.json",
+                _redacted_solvecaptcha_response(last),
+            )
+            _diagnostic_event(
+                out,
+                "solvecaptcha_failed",
+                solver_started,
+                solver="solvecaptcha",
+                poll=polls,
+                providerStatus=status,
+                errorCodePresent=True,
+            )
+            raise RuntimeError(f"SolveCaptcha 任务失败：{request_value}")
+        time.sleep(float(args.solvecaptcha_poll_interval))
+    write_json(
+        out / "solvecaptcha_result.json",
+        _redacted_solvecaptcha_response(last),
+    )
+    _diagnostic_event(
+        out,
+        "solvecaptcha_timeout",
+        solver_started,
+        solver="solvecaptcha",
+        poll=polls,
+        lastProviderStatus=str(last.get("request") or ""),
+    )
+    raise TimeoutError(
+        f"SolveCaptcha 任务 {task_id} 在 {args.solvecaptcha_timeout} 秒后超时"
+    )
 
 
 def solve_with_capmonster(
@@ -1974,7 +2272,7 @@ def main() -> int:
             resumedToken=bool(token),
             capmonsterProxyMode=(
                 args.capmonster_proxy_mode
-                if args.solver in {"capmonster", "twocaptcha"}
+                if args.solver in {"capmonster", "twocaptcha", "solvecaptcha"}
                 else "not-applicable"
             ),
         )
@@ -1994,6 +2292,10 @@ def main() -> int:
             elif args.solver == "twocaptcha":
                 health = {"ok": True, "status": "external-provider"}
                 solve_result = solve_with_twocaptcha(arkose, args, out, proxy)
+                token = str(solve_result["token"])
+            elif args.solver == "solvecaptcha":
+                health = {"ok": True, "status": "external-provider"}
+                solve_result = solve_with_solvecaptcha(arkose, args, out, proxy)
                 token = str(solve_result["token"])
             else:
                 if args.solver == "v11":
@@ -2227,12 +2529,12 @@ def main() -> int:
                         solve_result.get("proxyMode")
                         or args.capmonster_proxy_mode
                     )
-                    if args.solver in {"capmonster", "twocaptcha"}
+                    if args.solver in {"capmonster", "twocaptcha", "solvecaptcha"}
                     else "not-applicable"
                 ),
                 "capmonsterProxyModeRequested": (
                     args.capmonster_proxy_mode
-                    if args.solver in {"capmonster", "twocaptcha"}
+                    if args.solver in {"capmonster", "twocaptcha", "solvecaptcha"}
                     else "not-applicable"
                 ),
                 "capmonsterUserAgent": capmonster_user_agent_info,

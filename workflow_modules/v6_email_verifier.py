@@ -145,6 +145,9 @@ SECURITY_MESSAGE_ENDPOINTS = (
 SECURITY_MESSAGE_PAGE_LIMIT = 5
 SECURITY_MESSAGE_TIME_GRACE = timedelta(minutes=10)
 SECURITY_MESSAGE_REQUEST_TIMEOUT = 10.0
+GRAPH_LINK_REQUEST_TIMEOUT = 10.0
+GRAPH_LINK_MAX_TOKEN_REFRESHES = 1
+GRAPH_LINK_PHASE_RATIO = 0.6
 
 
 class GraphMailPermissionError(RuntimeError):
@@ -391,36 +394,76 @@ def poll_verification_link_attempts(
     not_before: datetime,
     attempts: int = 3,
     interval: float = 5.0,
+    timeout: float = 120.0,
 ) -> tuple[Optional[str], int, int]:
-    """Read Graph exactly ``attempts`` times before the resend recovery path."""
+    """Read Graph a bounded number of times before the resend recovery path."""
 
     total_attempts = max(1, int(attempts))
+    total_timeout = max(1.0, float(timeout))
+    deadline = time.monotonic() + total_timeout
     refresh_token = credential.refresh_token
     scanned_total = 0
     matching_total = 0
+    token_refreshes = 0
+    LOG.info(
+        "开始 Graph 验证邮件读取：总超时=%.1f 秒，最多读取=%s 次，单次请求超时=%.1f 秒",
+        total_timeout,
+        total_attempts,
+        GRAPH_LINK_REQUEST_TIMEOUT,
+    )
     with requests.Session() as session:
         session.trust_env = False
         session.headers["User-Agent"] = "BattleNetV6EmailVerifier/1.0"
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Graph 验证邮件读取超时")
         access_token, refresh_token = get_access_token(
             session,
             credential.client_id,
             refresh_token,
+            request_timeout=min(20.0, max(0.1, remaining)),
+            deadline=deadline,
         )
+        LOG.info("Graph 验证邮件访问令牌已获取，开始扫描收件箱")
         for attempt in range(1, total_attempts + 1):
-            while True:
-                try:
-                    link, scanned, matching = find_link(
-                        session,
-                        access_token,
-                        not_before=not_before,
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                LOG.warning("Graph 验证邮件读取达到总超时，切换回退流程")
+                raise TimeoutError("Graph 验证邮件读取超时")
+            LOG.info("Graph 验证邮件读取开始：第 %s/%s 次", attempt, total_attempts)
+            try:
+                link, scanned, matching = find_link(
+                    session,
+                    access_token,
+                    not_before=not_before,
+                    deadline=deadline,
+                    request_timeout=GRAPH_LINK_REQUEST_TIMEOUT,
+                )
+            except AccessTokenExpired:
+                if token_refreshes >= GRAPH_LINK_MAX_TOKEN_REFRESHES:
+                    LOG.warning(
+                        "Graph 访问令牌连续失效，已达到刷新上限=%s，切换回退流程",
+                        GRAPH_LINK_MAX_TOKEN_REFRESHES,
                     )
-                    break
-                except AccessTokenExpired:
-                    access_token, refresh_token = get_access_token(
-                        session,
-                        credential.client_id,
-                        refresh_token,
-                    )
+                    raise TimeoutError("Graph 验证邮件访问令牌刷新超限")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Graph 验证邮件读取超时")
+                token_refreshes += 1
+                LOG.warning(
+                    "Graph 访问令牌已过期，执行第 %s/%s 次刷新",
+                    token_refreshes,
+                    GRAPH_LINK_MAX_TOKEN_REFRESHES,
+                )
+                access_token, refresh_token = get_access_token(
+                    session,
+                    credential.client_id,
+                    refresh_token,
+                    request_timeout=min(20.0, max(0.1, remaining)),
+                    deadline=deadline,
+                )
+                attempt -= 1
+                continue
             scanned_total = max(scanned_total, scanned)
             matching_total = max(matching_total, matching)
             LOG.info(
@@ -434,7 +477,13 @@ def poll_verification_link_attempts(
             if link:
                 return link, scanned_total, matching_total
             if attempt < total_attempts:
-                time.sleep(max(0.0, float(interval)))
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                time.sleep(min(max(0.0, float(interval)), remaining))
+    if time.monotonic() >= deadline:
+        LOG.warning("Graph 验证邮件读取达到总超时，切换回退流程")
+        raise TimeoutError("Graph 验证邮件读取超时")
     return None, scanned_total, matching_total
 
 
@@ -1184,12 +1233,14 @@ def verify_registered_email(
         mail_not_before = max(not_before, requested_at)
         mail_timeout = max(1.0, float(args.email_mail_timeout))
         mail_deadline = time.monotonic() + mail_timeout
+        graph_timeout = max(1.0, mail_timeout * GRAPH_LINK_PHASE_RATIO)
         try:
             link, link_scanned, link_matching = poll_verification_link_attempts(
                 credential,
                 not_before=mail_not_before,
                 attempts=3,
                 interval=5.0,
+                timeout=graph_timeout,
             )
         except (O2MailboxError, requests.RequestException, RuntimeError, TimeoutError) as exc:
             LOG.warning(

@@ -84,6 +84,61 @@ def test_access_token_refresh_reports_oauth_error_without_echoing_credentials() 
     assert "refresh-token" not in message
 
 
+def test_shared_graph_token_reader_accepts_bounded_request_timeout() -> None:
+    calls: list[object] = []
+
+    class Response:
+        status_code = 200
+        reason = "OK"
+
+        def json(self):
+            return {"access_token": "access-token"}
+
+    class Session:
+        def post(self, endpoint, *, data, **kwargs):
+            calls.append(kwargs["timeout"])
+            return Response()
+
+    result = v5.get_access_token(
+        Session(),
+        "client-id",
+        "refresh-token",
+        request_timeout=2.5,
+    )
+
+    assert result == ("access-token", "refresh-token")
+    assert calls == [2.5]
+
+
+def test_shared_graph_link_reader_accepts_deadline_and_request_timeout() -> None:
+    calls: list[object] = []
+
+    class Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"value": []}
+
+    class Session:
+        def get(self, url, **kwargs):
+            calls.append(kwargs["timeout"])
+            return Response()
+
+    result = v5.find_link(
+        Session(),
+        "access-token",
+        not_before=datetime.now(timezone.utc),
+        deadline=target.time.monotonic() + 5.0,
+        request_timeout=2.5,
+    )
+
+    assert result == (None, 0, 0)
+    assert calls == [2.5]
+
+
 def test_oauth2_fallback_uses_common_endpoint_without_scope() -> None:
     calls: list[dict[str, object]] = []
 
@@ -374,6 +429,38 @@ def test_v5_link_reader_uses_o2_after_graph_timeout(monkeypatch) -> None:
 
     assert result == ("https://account.battle.net/verify?ticket=test", 4, 1)
     assert calls == [20.0]
+
+
+def test_shared_graph_link_poll_limits_token_refreshes(monkeypatch) -> None:
+    credential = parse_credential_line(
+        "mail@example.com----mail-pass----client-id----refresh-token",
+        source_index=1,
+    ).to_v5()
+    token_calls: list[object] = []
+
+    def refresh(*args, **kwargs):
+        token_calls.append(kwargs)
+        if len(token_calls) > 2:
+            raise AssertionError("shared Graph token refresh loop was not bounded")
+        return "access-token", "refresh-token"
+
+    monkeypatch.setattr(v5, "get_access_token", refresh)
+    monkeypatch.setattr(
+        v5,
+        "find_link",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            v5.AccessTokenExpired("expired")
+        ),
+    )
+
+    with pytest.raises(TimeoutError, match="Graph"):
+        v5.poll_verification_link(
+            credential,
+            not_before=datetime.now(timezone.utc),
+            timeout=10.0,
+        )
+
+    assert len(token_calls) == 2
 
 
 def test_email_verified_state_recognizes_overview_text() -> None:
@@ -812,6 +899,78 @@ def test_poll_verification_link_attempts_reads_exactly_three_times(
     assert matching == 0
     assert reads == [threshold, threshold, threshold]
     assert sleeps == [5.0, 5.0]
+
+
+def test_poll_verification_link_attempts_limits_token_refreshes(
+    monkeypatch,
+) -> None:
+    credential = parse_credential_line(
+        "mail@example.com----mail-pass----client-id----refresh-token",
+        source_index=1,
+    ).to_v5()
+    token_calls: list[dict[str, object]] = []
+
+    def refresh(*args, **kwargs):
+        token_calls.append(kwargs)
+        if len(token_calls) > 2:
+            raise AssertionError("Graph token refresh loop was not bounded")
+        return "access-token", "refresh-token"
+
+    monkeypatch.setattr(target, "get_access_token", refresh)
+    monkeypatch.setattr(
+        target,
+        "find_link",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            target.AccessTokenExpired("expired")
+        ),
+    )
+
+    with pytest.raises(TimeoutError, match="Graph"):
+        target.poll_verification_link_attempts(
+            credential,
+            not_before=datetime.now(timezone.utc),
+            attempts=3,
+            interval=5.0,
+            timeout=10.0,
+        )
+
+    assert len(token_calls) == 2
+
+
+def test_poll_verification_link_attempts_passes_deadline_to_graph_reader(
+    monkeypatch,
+) -> None:
+    credential = parse_credential_line(
+        "mail@example.com----mail-pass----client-id----refresh-token",
+        source_index=1,
+    ).to_v5()
+    calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        target,
+        "get_access_token",
+        lambda *args, **kwargs: ("access-token", "refresh-token"),
+    )
+
+    def find(*args, **kwargs):
+        calls.append(kwargs)
+        return None, 0, 0
+
+    monkeypatch.setattr(target, "find_link", find)
+    monkeypatch.setattr(target.time, "sleep", lambda seconds: None)
+
+    result = target.poll_verification_link_attempts(
+        credential,
+        not_before=datetime.now(timezone.utc),
+        attempts=1,
+        interval=5.0,
+        timeout=10.0,
+    )
+
+    assert result == (None, 0, 0)
+    assert len(calls) == 1
+    assert isinstance(calls[0]["deadline"], float)
+    assert calls[0]["request_timeout"] == target.GRAPH_LINK_REQUEST_TIMEOUT
 
 
 def test_verifier_clicks_resend_again_after_three_empty_reads(

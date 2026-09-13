@@ -774,7 +774,12 @@ def _message_is_recent(message: dict[str, Any], not_before: datetime) -> bool:
 
 
 def get_access_token(
-    session: requests.Session, client_id: str, refresh_token: str
+    session: requests.Session,
+    client_id: str,
+    refresh_token: str,
+    *,
+    request_timeout: float = 20.0,
+    deadline: Optional[float] = None,
 ) -> tuple[str, str]:
     """Exchange a refresh token while preserving the original grants.
 
@@ -798,8 +803,15 @@ def get_access_token(
         return f"{status} {response.reason}".strip()
 
     errors: list[str] = []
+    request_timeout = max(0.1, float(request_timeout))
     for endpoint in TOKEN_ENDPOINTS:
         for scope in (TOKEN_SCOPE, None):
+            timeout = request_timeout
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Microsoft access token 获取超时")
+                timeout = min(timeout, max(0.1, remaining))
             form = {
                 "client_id": client_id,
                 "grant_type": "refresh_token",
@@ -815,7 +827,7 @@ def get_access_token(
                         "Accept": "application/json",
                         "Content-Type": "application/x-www-form-urlencoded",
                     },
-                    timeout=20,
+                    timeout=timeout,
                 )
                 data = response.json()
             except (requests.RequestException, ValueError) as exc:
@@ -839,6 +851,8 @@ def find_link(
     access_token: str,
     *,
     not_before: datetime,
+    deadline: Optional[float] = None,
+    request_timeout: float = 30.0,
 ) -> tuple[Optional[str], int, int]:
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -856,11 +870,17 @@ def find_link(
     pages = 0
     while next_url and pages < 3:
         pages += 1
+        timeout = max(0.1, float(request_timeout))
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None, scanned, sender_matches
+            timeout = min(timeout, max(0.1, remaining))
         response = session.get(
             next_url,
             headers=headers,
             params=params if next_url == MESSAGES_URL else None,
-            timeout=30,
+            timeout=timeout,
         )
         if response.status_code == 401:
             raise AccessTokenExpired("Microsoft access token 已过期")
@@ -913,20 +933,43 @@ def poll_verification_link(
     refresh_token = credential.refresh_token
     scanned_total = 0
     matching_total = 0
+    token_refreshes = 0
+    max_token_refreshes = 1
     with requests.Session() as session:
         session.trust_env = False
         session.headers["User-Agent"] = "BattleNetV5EmailVerifier/1.0"
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Graph 验证邮件读取超时")
         access_token, refresh_token = get_access_token(
-            session, credential.client_id, refresh_token
+            session,
+            credential.client_id,
+            refresh_token,
+            request_timeout=min(20.0, max(0.1, remaining)),
+            deadline=deadline,
         )
         while time.monotonic() < deadline:
             try:
                 link, scanned, matching = find_link(
-                    session, access_token, not_before=not_before
+                    session,
+                    access_token,
+                    not_before=not_before,
+                    deadline=deadline,
+                    request_timeout=10.0,
                 )
             except AccessTokenExpired:
+                if token_refreshes >= max_token_refreshes:
+                    raise TimeoutError("Graph 验证邮件访问令牌刷新超限")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Graph 验证邮件读取超时")
+                token_refreshes += 1
                 access_token, refresh_token = get_access_token(
-                    session, credential.client_id, refresh_token
+                    session,
+                    credential.client_id,
+                    refresh_token,
+                    request_timeout=min(20.0, max(0.1, remaining)),
+                    deadline=deadline,
                 )
                 continue
             scanned_total = max(scanned_total, scanned)

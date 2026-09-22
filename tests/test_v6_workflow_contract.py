@@ -171,6 +171,18 @@ def test_v6_workflow_uses_short_solver_arrow_wait() -> None:
     assert "--click-gap-max-ms 800" in text
     assert "--click-interval-min-ms 400" in text
     assert "--click-interval-max-ms 800" in text
+    assert "--debug-screenshots" in text
+
+
+def test_v6_solver_keeps_named_debug_screenshot_stages() -> None:
+    source = (ROOT / "workflow_modules" / "register_ruyipage_v5.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'stage="captcha_visible"' in source
+    assert 'stage="before_submit"' in source
+    assert 'stage="page_rejected"' in source
+    assert '"page_rejected.png"' in source
 
 
 def test_v6_workflow_uploads_pending_email_accounts_only_when_present() -> None:

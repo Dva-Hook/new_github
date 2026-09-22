@@ -1835,6 +1835,32 @@ def save_yescaptcha_image_record(
     return path
 
 
+def save_solver_debug_screenshot(
+    page: Any,
+    out: Path,
+    filename: str,
+    *,
+    stage: str,
+    wave: Optional[int] = None,
+    error_type: str = "",
+) -> bool:
+    """Save a named solver screenshot plus non-secret stage metadata."""
+
+    screenshot_path = out / "solver_screenshots" / filename
+    saved = bool(v4.base.screenshot(page, screenshot_path))
+    if saved:
+        write_json(
+            screenshot_path.with_suffix(".json"),
+            {
+                "stage": stage,
+                "wave": wave,
+                "errorType": error_type,
+                "file": str(screenshot_path),
+            },
+        )
+    return saved
+
+
 _TERMINAL_SOLVER_STATUSES = frozenset(
     {
         "onFailed",
@@ -2003,6 +2029,13 @@ def auto_solve_yescaptcha_tab(
         seen.add(sha)
         image_path = save_yescaptcha_image_record(record, images_dir, wave)
         if args.debug_screenshots:
+            save_solver_debug_screenshot(
+                solver_tab,
+                out,
+                f"wave_{wave:02d}_captcha_visible.png",
+                stage="captcha_visible",
+                wave=wave,
+            )
             v4.base.screenshot(
                 solver_tab,
                 out / "solver_screenshots" / f"wave_{wave:02d}_before_answer.png",
@@ -2053,6 +2086,14 @@ def auto_solve_yescaptcha_tab(
                 "actions": actions,
             }
         time.sleep(0.08 + random.random() * 0.08)
+        if args.debug_screenshots:
+            save_solver_debug_screenshot(
+                solver_tab,
+                out,
+                f"wave_{wave:02d}_before_submit.png",
+                stage="before_submit",
+                wave=wave,
+            )
         submit_ok = v4.v3.click_submit(solver_tab)
         action = {
             "wave": wave,
@@ -2257,6 +2298,16 @@ def solve_with_browser(
                 "adapter": "cloakbrowser-playwright",
             }
         return result, current
+    except BaseException as exc:
+        if args.debug_screenshots and page is not None:
+            save_solver_debug_screenshot(
+                page,
+                out,
+                "page_rejected.png",
+                stage="page_rejected",
+                error_type=type(exc).__name__,
+            )
+        raise
     finally:
         with contextlib.suppress(Exception):
             if catcher:

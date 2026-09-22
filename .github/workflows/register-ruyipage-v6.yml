@@ -677,6 +677,7 @@ jobs:
             --click-gap-max-ms 800
             --verify-timeout 35
             --first-image-timeout 45
+            --debug-screenshots
           )
           if [ "$V6_SOLVER" = "yescaptcha" ]; then
             solver_click_args+=(

@@ -310,20 +310,21 @@ jobs:
         uses: actions/cache@v5
         with:
           path: .venv
-          key: v6-${{ needs.prepare.outputs.solver }}-${{ needs.prepare.outputs.browser }}-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage-v5.txt', 'requirements-ruyipage-v4.txt', 'rank_v11/requirements.txt') }}
+          key: v6-venv-v2-${{ needs.prepare.outputs.solver }}-${{ needs.prepare.outputs.browser }}-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage-v5.txt', 'requirements-ruyipage-v4.txt', 'rank_v11/requirements.txt') }}
 
       - name: 校验 V6 虚拟环境缓存
         id: venv-check
-        continue-on-error: true
         env:
           V5_SOLVER: ${{ needs.prepare.outputs.solver }}
           V5_BROWSER: ${{ needs.prepare.outputs.browser }}
         run: |
           set -euo pipefail
           if [ ! -x .venv/bin/python ]; then
-            echo "V6 虚拟环境解释器不存在"
-            exit 1
+            echo "V6 虚拟环境解释器不存在，将重建"
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          set +e
           .venv/bin/python - "$V5_SOLVER" "$V5_BROWSER" <<'PY'
           import importlib.util
           import sys
@@ -344,9 +345,17 @@ jobs:
           import workflow_runner
           import register_ruyipage_v6
           PY
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo "V6 虚拟环境缓存校验失败，将重建"
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "valid=true" >> "$GITHUB_OUTPUT"
 
       - name: 构建 V6 虚拟环境
-        if: steps.venv.outputs.cache-hit != 'true' || steps.venv-check.outcome != 'success'
+        if: steps.venv.outputs.cache-hit != 'true' || steps.venv-check.outputs.valid != 'true'
         env:
           V5_SOLVER: ${{ needs.prepare.outputs.solver }}
           V5_BROWSER: ${{ needs.prepare.outputs.browser }}
@@ -449,20 +458,21 @@ jobs:
         uses: actions/cache@v5
         with:
           path: .venv
-          key: v6-${{ needs.prepare.outputs.solver }}-${{ needs.prepare.outputs.browser }}-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage-v5.txt', 'requirements-ruyipage-v4.txt', 'rank_v11/requirements.txt') }}
+          key: v6-venv-v2-${{ needs.prepare.outputs.solver }}-${{ needs.prepare.outputs.browser }}-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage-v5.txt', 'requirements-ruyipage-v4.txt', 'rank_v11/requirements.txt') }}
 
       - name: 校验 V6 虚拟环境
         id: venv-check
-        continue-on-error: true
         env:
           V5_SOLVER: ${{ needs.prepare.outputs.solver }}
           V5_BROWSER: ${{ needs.prepare.outputs.browser }}
         run: |
           set -euo pipefail
           if [ ! -x .venv/bin/python ]; then
-            echo "V6 虚拟环境解释器不存在"
-            exit 1
+            echo "V6 虚拟环境解释器不存在，将重建"
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          set +e
           .venv/bin/python - "$V5_SOLVER" "$V5_BROWSER" <<'PY'
           import importlib.util
           import sys
@@ -483,6 +493,14 @@ jobs:
           import workflow_runner
           import register_ruyipage_v6
           PY
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo "V6 虚拟环境缓存校验失败，将重建"
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "valid=true" >> "$GITHUB_OUTPUT"
 
       - name: 恢复 RuyiPage Firefox 运行时
         id: ruyi-runtime
@@ -519,14 +537,14 @@ jobs:
             v5-email-browser-profile-v2-${{ needs.prepare.outputs.network }}-
 
       - name: 修复缺失的缓存依赖
-        if: steps.venv-check.outcome != 'success' || steps.ruyi-runtime.outputs.cache-hit != 'true' || (needs.prepare.outputs.browser == 'cloakbrowser' && steps.cloak-runtime.outputs.cache-hit != 'true')
+        if: steps.venv-check.outputs.valid != 'true' || steps.ruyi-runtime.outputs.cache-hit != 'true' || (needs.prepare.outputs.browser == 'cloakbrowser' && steps.cloak-runtime.outputs.cache-hit != 'true')
         env:
           V5_SOLVER: ${{ needs.prepare.outputs.solver }}
           V5_BROWSER: ${{ needs.prepare.outputs.browser }}
-          V6_VENV_CHECK: ${{ steps.venv-check.outcome }}
+          V6_VENV_CHECK: ${{ steps.venv-check.outputs.valid }}
         run: |
           set -euo pipefail
-          if [ "$V6_VENV_CHECK" != "success" ]; then
+          if [ "$V6_VENV_CHECK" != "true" ]; then
             echo "V6 虚拟环境校验失败，删除缓存并重建"
             rm -rf .venv
           fi

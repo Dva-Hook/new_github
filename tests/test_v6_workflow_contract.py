@@ -114,16 +114,18 @@ def test_v6_workflow_repairs_or_rebuilds_invalid_venv_cache() -> None:
         step for step in deps_steps if step.get("name") == "缓存 V6 虚拟环境"
     )
 
-    assert "v6-" in cache_step["with"]["key"]
+    assert "v6-venv-v2-" in cache_step["with"]["key"]
     check_step = next(
         step
         for step in deps_steps
         if step.get("name") == "校验 V6 虚拟环境缓存"
     )
-    assert check_step["continue-on-error"] is True
+    assert check_step.get("continue-on-error") is not True
+    assert "valid=false" in check_step["run"]
+    assert "valid=true" in check_step["run"]
     assert "if [ ! -x .venv/bin/python ]" in check_step["run"]
     assert "importlib.util.find_spec" in check_step["run"]
-    assert "steps.venv-check.outcome != 'success'" in build_step["if"]
+    assert "steps.venv-check.outputs.valid != 'true'" in build_step["if"]
     assert "requirements-ruyipage-v5.txt" in build_step["run"]
 
     register_steps = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"][
@@ -135,10 +137,13 @@ def test_v6_workflow_repairs_or_rebuilds_invalid_venv_cache() -> None:
     repair_step = next(
         step for step in register_steps if step.get("name") == "修复缺失的缓存依赖"
     )
-    assert register_check["continue-on-error"] is True
+    assert register_check.get("continue-on-error") is not True
+    assert "valid=false" in register_check["run"]
+    assert "valid=true" in register_check["run"]
     assert "importlib.util.find_spec" in register_check["run"]
-    assert "steps.venv-check.outcome != 'success'" in repair_step["if"]
-    assert repair_step["env"]["V6_VENV_CHECK"] == "${{ steps.venv-check.outcome }}"
+    assert "steps.venv-check.outputs.valid != 'true'" in repair_step["if"]
+    assert repair_step["env"]["V6_VENV_CHECK"] == "${{ steps.venv-check.outputs.valid }}"
+    assert '"$V6_VENV_CHECK" != "true"' in repair_step["run"]
     assert 'rm -rf .venv' in repair_step["run"]
 
 

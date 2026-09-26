@@ -24,7 +24,6 @@ on:
         default: "YesCaptcha"
         type: choice
         options:
-          - "本地 V11"
           - "YesCaptcha"
           - "CapMonster"
           - "2Captcha"
@@ -202,7 +201,6 @@ jobs:
                   "请使用 country_codes.txt 中的三字母代码"
               )
           solver_map = {
-              "本地 V11": "v11",
               "YesCaptcha": "yescaptcha",
               "CapMonster": "capmonster",
               "2Captcha": "twocaptcha",
@@ -310,7 +308,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: .venv
-          key: v6-venv-v2-${{ needs.prepare.outputs.solver }}-${{ needs.prepare.outputs.browser }}-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage-v5.txt', 'requirements-ruyipage-v4.txt', 'rank_v11/requirements.txt') }}
+          key: v6-venv-v2-${{ needs.prepare.outputs.solver }}-${{ needs.prepare.outputs.browser }}-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage-v5.txt', 'requirements-ruyipage-v4.txt') }}
 
       - name: 校验 V6 虚拟环境缓存
         id: venv-check
@@ -334,8 +332,6 @@ jobs:
               "ruyipage", "curl_cffi", "bs4", "websocket", "requests",
               "PIL", "numpy", "cv2",
           ]
-          if solver == "v11":
-              required.extend(["torch", "torchvision"])
           if browser == "cloakbrowser":
               required.append("cloakbrowser")
           missing = [name for name in required if importlib.util.find_spec(name) is None]
@@ -366,10 +362,6 @@ jobs:
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
           .venv/bin/pip install -r requirements-ruyipage-v5.txt
-          if [ "$V5_SOLVER" = "v11" ]; then
-            .venv/bin/pip install torch torchvision \
-              --index-url https://download.pytorch.org/whl/cpu
-          fi
           if [ "$V5_BROWSER" = "cloakbrowser" ]; then
             .venv/bin/pip install "cloakbrowser>=0.4.10"
           fi
@@ -387,8 +379,6 @@ jobs:
               "ruyipage", "curl_cffi", "bs4", "websocket", "requests",
               "PIL", "numpy", "cv2",
           ]
-          if os.environ["V5_SOLVER"] == "v11":
-              required.extend(["torch", "torchvision"])
           if os.environ["V5_BROWSER"] == "cloakbrowser":
               required.append("cloakbrowser")
           missing = [name for name in required if importlib.util.find_spec(name) is None]
@@ -458,7 +448,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: .venv
-          key: v6-venv-v2-${{ needs.prepare.outputs.solver }}-${{ needs.prepare.outputs.browser }}-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage-v5.txt', 'requirements-ruyipage-v4.txt', 'rank_v11/requirements.txt') }}
+          key: v6-venv-v2-${{ needs.prepare.outputs.solver }}-${{ needs.prepare.outputs.browser }}-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage-v5.txt', 'requirements-ruyipage-v4.txt') }}
 
       - name: 校验 V6 虚拟环境
         id: venv-check
@@ -482,8 +472,6 @@ jobs:
               "ruyipage", "curl_cffi", "bs4", "websocket", "requests",
               "PIL", "numpy", "cv2",
           ]
-          if solver == "v11":
-              required.extend(["torch", "torchvision"])
           if browser == "cloakbrowser":
               required.append("cloakbrowser")
           missing = [name for name in required if importlib.util.find_spec(name) is None]
@@ -552,10 +540,6 @@ jobs:
             python -m venv .venv
             .venv/bin/python -m pip install --upgrade pip
             .venv/bin/pip install -r requirements-ruyipage-v5.txt
-            if [ "$V5_SOLVER" = "v11" ]; then
-              .venv/bin/pip install torch torchvision \
-                --index-url https://download.pytorch.org/whl/cpu
-            fi
             if [ "$V5_BROWSER" = "cloakbrowser" ]; then
               .venv/bin/pip install "cloakbrowser>=0.4.10"
             fi
@@ -622,22 +606,6 @@ jobs:
           test -n "$provider_key"
           echo "::add-mask::$provider_key"
 
-      - name: 启动本地 V11 服务
-        if: needs.prepare.outputs.solver == 'v11'
-        env:
-          RANK_V11_CACHE_DIR: ${{ runner.temp }}/rank_v11_cache_${{ matrix.index }}
-        run: |
-          set -euo pipefail
-          nohup .venv/bin/python rank_v11/server.py \
-            --host 127.0.0.1 \
-            --port 8765 \
-            --device cpu \
-            --cpu-threads 2 \
-            --mode accurate \
-            --cache-dir "$RANK_V11_CACHE_DIR" \
-            > rank_v11_server.log 2>&1 &
-          echo $! > rank_v11_server.pid
-
       - name: 执行 HTTP V6 注册
         env:
           V6_SOLVER: ${{ needs.prepare.outputs.solver }}
@@ -647,7 +615,6 @@ jobs:
           V6_EMAIL_POOL_FILE: Email_registing_v6.txt
           V6_EMAIL_POOL_INDEX: ${{ matrix.index }}
           V6_VERIFY_EMAIL: ${{ needs.prepare.outputs.verify_email }}
-          RANK_V11_URL: http://127.0.0.1:8765
           YESCAPTCHA_API_KEY: ${{ secrets.YESCAPTCHA_API_KEY || inputs.yescaptcha_key }}
           CAPMONSTER_API_KEY: ${{ secrets.CAPMONSTER_API_KEY || inputs.capmonster_key }}
           TWOCAPTCHA_API_KEY: ${{ secrets.TWOCAPTCHA_API_KEY || inputs.twocaptcha_key }}
@@ -702,8 +669,7 @@ jobs:
                 --country-probe \
                 "${solver_click_args[@]}" \
                 --static-cache-dir "$V6_STATIC_CACHE_DIR" \
-                --email-browser-cache-dir "$V6_EMAIL_BROWSER_CACHE_DIR" \
-                --rank-v11-url "$RANK_V11_URL"
+                --email-browser-cache-dir "$V6_EMAIL_BROWSER_CACHE_DIR"
             last_rc=$?
             echo "V6 第 ${attempt}/3 次尝试退出码：${last_rc}"
             echo "::endgroup::"
@@ -775,13 +741,6 @@ jobs:
         with:
           path: .cache/v5_email_browser_profile
           key: v5-email-browser-profile-v2-${{ needs.prepare.outputs.network }}-${{ github.run_id }}
-
-      - name: 停止本地 V11 服务
-        if: always() && needs.prepare.outputs.solver == 'v11'
-        run: |
-          if [ -f rank_v11_server.pid ]; then
-            kill "$(cat rank_v11_server.pid)" 2>/dev/null || true
-          fi
 
       - name: 导出成功账号
         if: always()
@@ -858,7 +817,6 @@ jobs:
         with:
           name: V6-${{ inputs.solver }}-${{ inputs.browser }}-运行数据-${{ matrix.index }}
           path: |
-            rank_v11_server.log
             interrupted_by_runner.txt
             ruyipage_http_v6_register/runs/**
           if-no-files-found: ignore

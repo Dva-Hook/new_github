@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Battle.net persistent HTTP registration with RuyiPage + local Route V11.
+"""
+HTTP 持久化。
 
-The registration form is advanced by one persistent curl_cffi session.  A
-short-lived RuyiPage Firefox process is started only after the server returns
-the Arkose blob.  The browser renders the challenge, the existing V3 solver
-captures each challenge strip and asks the local V11 service for the answer,
-then the resulting token is submitted by the original HTTP session.
+从旧版 V3 分离出跨协议版本可复用的 ClientState、
+ArkoseToken、HTTP 基础、验证码映射、代理、同步共识。
 """
 
 from __future__ import annotations
@@ -38,31 +36,19 @@ def _load_v3_solver_modules():
     ``register.py`` has a legacy top-level CloakBrowser import even though the
     RuyiPage V3 solver never calls it.  A temporary import shim keeps the V4
     dependency set small; the shim is removed immediately after imports.
+
+    注意：V3 模块已移除，此函数不再可用。
     """
-
-    shimmed = False
-    if importlib.util.find_spec("cloakbrowser") is None:
-        module = types.ModuleType("cloakbrowser")
-
-        def unavailable_launch(*_args, **_kwargs):
-            raise RuntimeError("CloakBrowser 不属于 V4 运行时")
-
-        module.launch = unavailable_launch
-        sys.modules["cloakbrowser"] = module
-        shimmed = True
-    try:
-        import register_ruyipage_v3 as solver
-        from register import REGISTER_URL, generate_identity
-        from ruyipage_manual_register import manual_same_browser_register_ruyipage as browser
-    finally:
-        if shimmed:
-            sys.modules.pop("cloakbrowser", None)
-    return solver, browser, REGISTER_URL, generate_identity
+    raise RuntimeError(
+        "register_ruyipage_v3 已移除，V4 的 V3 依赖不再可用。"
+        "请使用 V5/V6 工作流。"
+    )
 
 
-v3, base, REGISTER_URL, generate_identity = _load_v3_solver_modules()
+# V3 模块已移除，_load_v3_solver_modules() 不可用
+v3, base, REGISTER_URL, generate_identity = None, None, None, None
 
-LOG = logging.getLogger("ruyipage_http_v11")
+LOG = logging.getLogger("ruyipage_http_v4")
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "ruyipage_http_v11_register" / "runs"
 DEFAULT_SITE_KEY = "E8A75615-1CBA-5DFF-8032-D16BCF234E10"

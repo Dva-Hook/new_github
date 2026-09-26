@@ -78,7 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.description = "HTTP 持久化注册到 captcha-gate + RuyiPage 多轮题图采集"
     parser.set_defaults(
         output_dir=os.environ.get("SNAPSHOT_OUTPUT_DIR", str(DEFAULT_OUTPUT_ROOT)),
-        solver="v11",
+        solver="yescaptcha",
         browser="ruyipage",
         email_source="generated",
         country=os.environ.get("SNAPSHOT_COUNTRY", "USA"),
@@ -284,7 +284,7 @@ def main() -> int:
     args = build_parser().parse_args()
     # 快照工作流固定使用 V6 同款自动邮箱、HTTP 持久化和 RuyiPage。
     args.email_source = "generated"
-    args.solver = "v11"
+    args.solver = "yescaptcha"
     args.browser = "ruyipage"
     args.debug_screenshots = True
     v4.configure_v3_clicks(args)

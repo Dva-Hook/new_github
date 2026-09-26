@@ -1,6 +1,6 @@
 # Battle.net FunCaptcha Register Toolkit
 
-当前项目以 HTTP 持久化注册、RuyiPage 浏览器求解、本地 V11/第三方求解器、邮箱验证和题图采集为主要功能。
+当前项目以 HTTP 持久化注册、RuyiPage 浏览器求解、第三方求解器、邮箱验证和题图采集为主要功能。
 
 ## 统一入口
 
@@ -29,7 +29,6 @@ python workflow_runner.py check
 - `.github/workflows/email-verify-ruyipage-v3.yml`：邮箱验证。
 - `.github/workflows/register-funcaptcha-snapshots.yml`：HTTP 多轮 FunCaptcha 题图采集。
 - `.github/workflows/capture-images.yml`：题图采集兼容入口。
-- `rank_v11/`：本地 V11 模型服务与推理组件。
 - `v5_desktop_ui/`：V5 本地桌面批量运行界面。
 
 ## 旧版归档

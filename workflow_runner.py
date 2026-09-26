@@ -29,6 +29,7 @@ MODULE_NAMES = (
     "proxy_traffic_meter",
     "register",
     "register_capture_images",
+    "register_ruyipage_v3",
     "register_ruyipage_v4",
     "register_ruyipage_v5",
     "register_ruyipage_v6",

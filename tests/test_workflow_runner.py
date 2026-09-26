@@ -26,6 +26,12 @@ def test_internal_modules_compile_without_import_side_effects() -> None:
     assert workflow_runner.check_modules() == 0
 
 
+def test_v3_shared_module_is_registered_for_v4_lazy_loading() -> None:
+    module = workflow_runner.load_module("register_ruyipage_v3")
+    assert Path(module.__file__).resolve() == ROOT / "register_ruyipage_v3.py"
+    assert (ROOT / "workflow_modules" / "register_ruyipage_v3.py").is_file()
+
+
 def test_internal_module_keeps_original_virtual_project_path() -> None:
     module = workflow_runner.load_module("v6_email_pool")
     assert Path(module.__file__).resolve() == ROOT / "v6_email_pool.py"

@@ -31,22 +31,18 @@ from v4_browser_resource_optimizer import BrowserResourceOptimizer, MIB
 
 
 def _load_v3_solver_modules():
-    """Load V3 helpers without installing or launching CloakBrowser.
+    """Load V3 public components (not as a solver).
 
-    ``register.py`` has a legacy top-level CloakBrowser import even though the
-    RuyiPage V3 solver never calls it.  A temporary import shim keeps the V4
-    dependency set small; the shim is removed immediately after imports.
-
-    注意：V3 模块已移除，此函数不再可用。
+    V3 is no longer used as a standalone workflow, but V4/V5 still depend on
+    its public components like RuyiArkoseImageCatcher, image utilities, etc.
     """
-    raise RuntimeError(
-        "register_ruyipage_v3 已移除，V4 的 V3 依赖不再可用。"
-        "请使用 V5/V6 工作流。"
-    )
+    import register_ruyipage_v3 as v3_module
+    return v3_module
 
 
-# V3 模块已移除，_load_v3_solver_modules() 不可用
-v3, base, REGISTER_URL, generate_identity = None, None, None, None
+# Load V3 public components for V4/V5 use
+v3 = _load_v3_solver_modules()
+base, REGISTER_URL, generate_identity = None, None, None
 
 LOG = logging.getLogger("ruyipage_http_v4")
 PROJECT_ROOT = Path(__file__).resolve().parent

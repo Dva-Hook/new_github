@@ -1,13 +1,20 @@
 # -*- coding: utf-8 -*-
-"""RuyiPage 同浏览器新标签 + 本地 Route V11 自动解题。
+"""V3 public component library (deprecated as standalone workflow).
 
-核心闭环：
-  原注册标签 -> 抓 Arkose publicKey/surl/blob -> 同浏览器新标签加载 Arkose
-  -> 点击 Verify -> Firefox BiDi 抓 /rtig/image 验证图
-  -> 只接受 standing-on-the-same-icons 题型
-  -> 本地常驻 Route V11 返回 answer_index
-  -> 把 answer_index 当成“点击下一张图按钮 N 次”
-  -> Submit，多轮直到 onCompleted token -> 回原标签注入 token。
+This module was originally a complete workflow for RuyiPage same-browser
+new-tab + local Route V11 automatic solving. Since the local V11 solving
+solution has been removed, this module is no longer used as a standalone workflow.
+
+However, V4 and V5 modules depend on the following public components in this module:
+- RuyiArkoseImageCatcher: Arkose image catcher base class
+- image_size, image_ext: image utility functions
+- solver_state, completion_rejection_reason: state detection functions
+- wait_token_quick, build_token_result: token waiting and building
+- click_arrow, click_submit, current_index, wait_index_change: page interaction
+- ensure_verify_or_image: verification or image confirmation
+
+Therefore, this module is preserved for use as a library, but its use as
+a standalone workflow entry and configuration is removed.
 """
 from __future__ import annotations
 

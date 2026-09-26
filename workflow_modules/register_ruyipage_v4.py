@@ -35,13 +35,18 @@ def _load_v3_solver_modules():
 
     V3 is no longer used as a standalone workflow, but V4/V5 still depend on
     its public components like RuyiArkoseImageCatcher, image utilities, etc.
+
+    This is lazy-loaded on first access to avoid import-time circular dependencies.
     """
-    import register_ruyipage_v3 as v3_module
-    return v3_module
+    global v3
+    if v3 is None:
+        import register_ruyipage_v3 as v3_module
+        v3 = v3_module
+    return v3
 
 
-# Load V3 public components for V4/V5 use
-v3 = _load_v3_solver_modules()
+# V3 will be lazy-loaded on first access
+v3 = None
 base, REGISTER_URL, generate_identity = None, None, None
 
 LOG = logging.getLogger("ruyipage_http_v4")
@@ -331,6 +336,7 @@ def run_v4_solver_tab(
     args: argparse.Namespace,
     out: Path,
 ) -> dict[str, Any]:
+    _load_v3_solver_modules()
     try:
         return v3.auto_solve_solver_tab(page, image_catcher, args, out)
     except v3.UnsupportedCaptchaQuestion as exc:
@@ -685,6 +691,7 @@ def configured_identity(args: argparse.Namespace) -> dict[str, str]:
 
 
 def configure_v3_clicks(args: argparse.Namespace) -> None:
+    _load_v3_solver_modules()
     v3.CLICK_STYLE = args.click_style
     v3.HUMAN_MOVE_MIN_MS = max(100, int(args.human_move_min_ms))
     v3.HUMAN_MOVE_MAX_MS = max(
@@ -700,6 +707,7 @@ def configure_v3_clicks(args: argparse.Namespace) -> None:
 
 
 def wait_rank_v11_service(base_url: str, timeout: float) -> dict[str, Any]:
+    _load_v3_solver_modules()
     deadline = time.monotonic() + max(0.1, float(timeout))
     last_error: Optional[Exception] = None
     while time.monotonic() < deadline:
@@ -804,6 +812,7 @@ def solve_arkose_with_ruyi(
     out: Path,
     runtime_proxy_url: Optional[str] = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    _load_v3_solver_modules()
     page = None
     image_catcher = None
     optimizer = None
@@ -887,6 +896,7 @@ def solve_arkose_with_ruyi(
 
 
 def build_parser() -> argparse.ArgumentParser:
+    _load_v3_solver_modules()
     parser = argparse.ArgumentParser(
         description="持久 HTTP 注册 + RuyiPage + 本地 Route V11"
     )

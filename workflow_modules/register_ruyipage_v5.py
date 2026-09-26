@@ -1755,62 +1755,80 @@ def _install_cloak_resource_filter(page: Any, enabled: bool) -> None:
     page.context.route("**/*", route_handler)
 
 
-class V5RuyiYesCaptchaImageCatcher(v4.v3.RuyiArkoseImageCatcher):
-    """V4-compatible catcher that accepts compact Arkose RTIG strips."""
+def _make_v5_catcher_class():
+    """Lazy factory for V5RuyiYesCaptchaImageCatcher to avoid import-time v3 access."""
+    v4._load_v3_solver_modules()
 
-    def wait_new_challenge(
-        self,
-        seen: set[str],
-        timeout: float,
-        stop_page: Any = None,
-    ) -> Optional[dict[str, Any]]:
-        deadline = time.time() + max(0.0, float(timeout))
-        while time.time() < deadline:
-            if stop_page is not None:
-                with contextlib.suppress(Exception):
-                    if v4.base.captcha_state(stop_page) in ("success", "rejected"):
-                        return None
-            with self._lock:
-                ready = [
-                    dict(record)
-                    for record in self.captured_images
-                    if record.get("body_bytes")
-                ]
-            ready.sort(
-                key=lambda record: (
-                    0
-                    if "/rtig/image" in str(record.get("url") or "").lower()
-                    else 1,
-                    record.get("timestamp") or 0,
+    class V5RuyiYesCaptchaImageCatcher(v4.v3.RuyiArkoseImageCatcher):
+        """V4-compatible catcher that accepts compact Arkose RTIG strips."""
+
+        def wait_new_challenge(
+            self,
+            seen: set[str],
+            timeout: float,
+            stop_page: Any = None,
+        ) -> Optional[dict[str, Any]]:
+            deadline = time.time() + max(0.0, float(timeout))
+            while time.time() < deadline:
+                if stop_page is not None:
+                    with contextlib.suppress(Exception):
+                        if v4.base.captcha_state(stop_page) in ("success", "rejected"):
+                            return None
+                with self._lock:
+                    ready = [
+                        dict(record)
+                        for record in self.captured_images
+                        if record.get("body_bytes")
+                    ]
+                ready.sort(
+                    key=lambda record: (
+                        0
+                        if "/rtig/image" in str(record.get("url") or "").lower()
+                        else 1,
+                        record.get("timestamp") or 0,
+                    )
                 )
-            )
-            for record in ready:
-                data = record.get("body_bytes") or b""
-                sha = record.get("sha256") or hashlib.sha256(data).hexdigest()
-                if sha in seen:
-                    continue
-                size = record.get("size") or v4.v3.image_size(data)
-                if size:
-                    width, height = size
-                    is_rtig = "/rtig/image" in str(
-                        record.get("url") or ""
-                    ).lower()
-                    valid_rtig = is_rtig and 300 <= height <= 650
-                    valid_generic = width >= 800 and 300 <= height <= 650
-                    if not valid_rtig and not valid_generic:
-                        seen.add(sha)
-                        LOG.info(
-                            "[%s] 忽略非题目图片：尺寸=%sx%s，网址=%s",
-                            self.label,
-                            width,
-                            height,
-                            str(record.get("url") or "")[:120],
-                        )
+                for record in ready:
+                    data = record.get("body_bytes") or b""
+                    sha = record.get("sha256") or hashlib.sha256(data).hexdigest()
+                    if sha in seen:
                         continue
-                return record
-            self._event.wait(0.5)
-            self._event.clear()
-        return None
+                    size = record.get("size") or v4.v3.image_size(data)
+                    if size:
+                        width, height = size
+                        is_rtig = "/rtig/image" in str(
+                            record.get("url") or ""
+                        ).lower()
+                        valid_rtig = is_rtig and 300 <= height <= 650
+                        valid_generic = width >= 800 and 300 <= height <= 650
+                        if not valid_rtig and not valid_generic:
+                            seen.add(sha)
+                            LOG.info(
+                                "[%s] 忽略非题目图片：尺寸=%sx%s，网址=%s",
+                                self.label,
+                                width,
+                                height,
+                                str(record.get("url") or "")[:120],
+                            )
+                            continue
+                    return record
+                self._event.wait(0.5)
+                self._event.clear()
+            return None
+
+    return V5RuyiYesCaptchaImageCatcher
+
+
+# Module-level cache for the class
+_V5RuyiYesCaptchaImageCatcher = None
+
+
+def V5RuyiYesCaptchaImageCatcher(*args, **kwargs):
+    """Factory function that returns an instance of the lazily-loaded class."""
+    global _V5RuyiYesCaptchaImageCatcher
+    if _V5RuyiYesCaptchaImageCatcher is None:
+        _V5RuyiYesCaptchaImageCatcher = _make_v5_catcher_class()
+    return _V5RuyiYesCaptchaImageCatcher(*args, **kwargs)
 
 
 def save_yescaptcha_image_record(

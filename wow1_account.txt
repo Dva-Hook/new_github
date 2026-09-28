@@ -1,0 +1,5 @@
+# WoW1 账号列表 - V7 输入文件
+# 格式: 一行一个邮箱
+# 示例:
+# test@example.com
+# user@domain.com

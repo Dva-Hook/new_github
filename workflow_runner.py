@@ -167,6 +167,10 @@ def run_register_v6(argv: Sequence[str] | None = None) -> int:
     return run_module_cli("register_ruyipage_v6", argv)
 
 
+def run_register_v7(argv: Sequence[str] | None = None) -> int:
+    return run_module_cli("register_ruyipage_v7", argv)
+
+
 def check_modules(module_names: Iterable[str] | None = None) -> int:
     """不触发网络或浏览器，只编译检查统一模块。"""
 
@@ -192,6 +196,7 @@ COMMANDS: dict[str, Callable[[Sequence[str] | None], int]] = {
     "register-v4": run_register_v4,
     "register-v5": run_register_v5,
     "register-v6": run_register_v6,
+    "register-v7": run_register_v7,
 }
 
 

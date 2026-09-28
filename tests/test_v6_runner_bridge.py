@@ -138,7 +138,7 @@ def test_verification_bridge_can_skip_browser_verification(monkeypatch) -> None:
         "引导流程结束在意外表单 'login'：Battle.net Login Welcome back mail@example.com",
     ],
 )
-def test_login_form_bootstrap_is_terminal_exit_43(monkeypatch, message) -> None:
+def test_login_form_bootstrap_is_unconfirmed_exit_45(monkeypatch, message) -> None:
     def fail(*args, **kwargs):
         raise RuntimeError(message)
 
@@ -150,7 +150,7 @@ def test_login_form_bootstrap_is_terminal_exit_43(monkeypatch, message) -> None:
     with pytest.raises(SystemExit) as caught:
         v6._run_to_captcha_v6(client, country="USA")
 
-    assert caught.value.code == v6.EXIT_EMAIL_ALREADY_REGISTERED
+    assert caught.value.code == v6.EXIT_LOGIN_FORM_UNCONFIRMED
 
 
 def test_other_bootstrap_errors_remain_retryable(monkeypatch) -> None:

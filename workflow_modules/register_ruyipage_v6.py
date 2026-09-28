@@ -19,7 +19,7 @@ DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "ruyipage_http_v6_register" / "runs"
 _V5_BUILD_PARSER = v5.build_parser
 _V5_VERIFY_REGISTERED_EMAIL = v6_email_verifier.verify_registered_email
 _V5_RUN_TO_CAPTCHA = v5.BattleProtocolClient.run_to_captcha
-EXIT_EMAIL_ALREADY_REGISTERED = 43
+EXIT_LOGIN_FORM_UNCONFIRMED = 45
 EXIT_CAPTCHA_SERVER_REJECTED = 44
 
 
@@ -114,8 +114,8 @@ def _verify_registered_email_v6(
     )
 
 
-def _is_already_registered_bootstrap_error(exc: BaseException) -> bool:
-    """Recognize localized bootstrap login-form responses for a supplied address."""
+def _is_login_form_bootstrap_error(exc: BaseException) -> bool:
+    """Recognize a login-form bootstrap response without inferring account state."""
     message = str(exc)
     return bool(
         re.search(
@@ -128,21 +128,22 @@ def _is_already_registered_bootstrap_error(exc: BaseException) -> bool:
 
 
 def _run_to_captcha_v6(self, *args, **kwargs):
-    """Give an already-registered mailbox a terminal, non-retryable exit code."""
+    """Stop on an unconfirmed login redirect without consuming the mailbox row."""
     try:
         return _V5_RUN_TO_CAPTCHA(self, *args, **kwargs)
     except RuntimeError as exc:
-        if not _is_already_registered_bootstrap_error(exc):
+        if not _is_login_form_bootstrap_error(exc):
             raise
         identity = getattr(getattr(self, "state", None), "data", {}).get(
             "identity", {}
         )
         email = str(identity.get("email") or "")
         v5.LOG.warning(
-            "bootstrap 返回 login 表单，判定邮箱已注册%s；停止当前 Job 的后续重试",
+            "bootstrap 返回 login 表单，但没有明确的邮箱已注册证据%s；"
+            "停止当前 Job，保留邮箱待复核",
             f": {email}" if email else "",
         )
-        raise SystemExit(EXIT_EMAIL_ALREADY_REGISTERED) from None
+        raise SystemExit(EXIT_LOGIN_FORM_UNCONFIRMED) from None
 
 
 def _install_v6_contract() -> None:

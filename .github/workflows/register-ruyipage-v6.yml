@@ -714,19 +714,17 @@ jobs:
             if [ "$last_rc" -eq 0 ]; then
               exit 0
             fi
-            if [ "$last_rc" -eq 43 ]; then
-              echo "检测到 bootstrap 返回 login 表单：邮箱已注册，停止重试并标记为不可再分配"
-              if [ "$V6_EMAIL_SOURCE" != "pool" ]; then
-                echo "当前使用虚拟邮箱，不需要更新邮箱池"
-                exit 0
+            if [ "$last_rc" -eq 45 ]; then
+              echo "检测到 bootstrap 返回 login 表单：状态不确定，停止重试但保留邮箱，不删除输入"
+              if [ "$V6_EMAIL_SOURCE" = "pool" ]; then
+                .venv/bin/python -c 'import os; import workflow_runner; from pathlib import Path; from v6_email_pool import select_email_credential; credential = select_email_credential(os.environ["V6_EMAIL_POOL_FILE"], int(os.environ["V6_EMAIL_POOL_INDEX"])); Path("login_form_unconfirmed_email.txt").write_text(credential.email + "\n", encoding="utf-8"); print(f"已保留待复核邮箱：{credential.email}")'
+                marker_rc=$?
+                if [ "$marker_rc" -ne 0 ]; then
+                  echo "待复核邮箱标记失败，保留退出码 45"
+                  exit 45
+                fi
               fi
-              .venv/bin/python -c 'import os; import workflow_runner; from pathlib import Path; from v6_email_pool import select_email_credential; credential = select_email_credential(os.environ["V6_EMAIL_POOL_FILE"], int(os.environ["V6_EMAIL_POOL_INDEX"])); Path("already_registered_email.txt").write_text(credential.email + "\n", encoding="utf-8"); print(f"已标记邮箱：{credential.email}")'
-              marker_rc=$?
-              if [ "$marker_rc" -ne 0 ]; then
-                echo "已注册邮箱标记失败，保留退出码 43"
-                exit 43
-              fi
-              exit 0
+              exit 45
             fi
             if [ "$last_rc" -eq 42 ]; then
               echo "Arkose 题型不受支持，停止重试"
@@ -873,7 +871,7 @@ jobs:
             registered_account.txt
             email_pending_account.txt
             consumed_email.txt
-            already_registered_email.txt
+            login_form_unconfirmed_email.txt
           if-no-files-found: ignore
           compression-level: 9
 
@@ -937,19 +935,19 @@ jobs:
               if consumed else "",
               encoding="utf-8",
           )
-          already_registered = set()
-          for path in Path("all_accounts").glob("**/already_registered_email.txt"):
-              already_registered.update(
+          login_form_unconfirmed = set()
+          for path in Path("all_accounts").glob("**/login_form_unconfirmed_email.txt"):
+              login_form_unconfirmed.update(
                   line.strip()
                   for line in path.read_text(encoding="utf-8").splitlines()
                   if line.strip()
               )
-          Path("already_registered_emails.txt").write_text(
-              ("\n".join(sorted(already_registered, key=str.casefold)) + "\n")
-              if already_registered else "",
+          Path("login_form_unconfirmed_emails.txt").write_text(
+              ("\n".join(sorted(login_form_unconfirmed, key=str.casefold)) + "\n")
+              if login_form_unconfirmed else "",
               encoding="utf-8",
           )
-          pool_removals = consumed | already_registered
+          pool_removals = consumed
           Path("pool_removal_emails.txt").write_text(
               ("\n".join(sorted(pool_removals, key=str.casefold)) + "\n")
               if pool_removals else "",
@@ -958,7 +956,7 @@ jobs:
           print(
               f"已合并 {len(files)} 个账号文件，成功邮箱 {len(consumed)} 个，"
               f"邮箱待验证 {len(pending_files)} 个，"
-              f"原本已注册邮箱 {len(already_registered)} 个"
+              f"login 表单待复核邮箱 {len(login_form_unconfirmed)} 个"
           )
           PY
 
@@ -1020,7 +1018,7 @@ jobs:
           path: |
             all_accounts.txt
             successful_emails.txt
-            already_registered_emails.txt
+            login_form_unconfirmed_emails.txt
             pool_removal_emails.txt
             email_pool_update.json
           if-no-files-found: error

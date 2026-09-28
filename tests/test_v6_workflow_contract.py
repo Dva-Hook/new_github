@@ -147,14 +147,18 @@ def test_v6_workflow_repairs_or_rebuilds_invalid_venv_cache() -> None:
     assert 'rm -rf .venv' in repair_step["run"]
 
 
-def test_v6_workflow_quarantines_login_form_without_retrying() -> None:
+def test_v6_workflow_quarantines_login_form_without_deleting_input() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
 
-    assert 'if [ "$last_rc" -eq 43 ]; then' in text
-    assert "already_registered_email.txt" in text
-    assert "already_registered_emails.txt" in text
+    assert 'if [ "$last_rc" -eq 45 ]; then' in text
+    assert "login_form_unconfirmed_email.txt" in text
+    assert "login_form_unconfirmed_emails.txt" in text
+    assert "状态不确定" in text
+    assert "already_registered_email.txt" not in text
+    assert "already_registered_emails.txt" not in text
     assert "pool_removal_emails.txt" in text
     assert 'success_path = Path("pool_removal_emails.txt")' in text
+    assert "pool_removals = consumed" in text
 
 
 def test_v6_workflow_stops_deterministic_server_rejection_without_retrying() -> None:
@@ -223,13 +227,13 @@ def test_v6_registration_shell_block_has_valid_bash_syntax() -> None:
         step["run"] for step in steps if step.get("name") == "执行 HTTP V6 注册"
     )
 
-    # The exit-43 branch must not use an indented heredoc: Bash parses the whole
+    # The exit-45 branch must not use an indented heredoc: Bash parses the whole
     # function before executing it and would reject every job before Python starts.
-    exit_43_branch = script.split('if [ "$last_rc" -eq 43 ]; then', 1)[1]
-    exit_43_branch = exit_43_branch.split(
+    exit_45_branch = script.split('if [ "$last_rc" -eq 45 ]; then', 1)[1]
+    exit_45_branch = exit_45_branch.split(
         'if [ "$last_rc" -eq 42 ]; then', 1
     )[0]
-    assert "<<'PY'" not in exit_43_branch
+    assert "<<'PY'" not in exit_45_branch
 
     candidates = [Path(value) for value in [shutil.which("bash")] if value]
     git = shutil.which("git")

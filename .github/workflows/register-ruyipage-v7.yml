@@ -837,8 +837,13 @@ jobs:
           from pathlib import Path
 
           files = sorted(Path("all_accounts").glob("**/registered_account.txt"))
-          chunks = [path.read_text(encoding="utf-8").strip() for path in files]
-          output = "\n\n".join(chunk for chunk in chunks if chunk).strip()
+          accounts = []
+          for path in files:
+              for line in path.read_text(encoding="utf-8").splitlines():
+                  line = line.strip()
+                  if line and "----" in line:
+                      accounts.append(line)
+          output = "\n".join(accounts)
           Path("all_accounts.txt").write_text(
               (output + "\n") if output else "（没有成功账号）\n",
               encoding="utf-8",

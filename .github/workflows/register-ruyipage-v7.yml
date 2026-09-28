@@ -759,7 +759,7 @@ jobs:
               if not email or not password or email.casefold() in seen:
                   continue
               seen.add(email.casefold())
-              records.append(f"账号：{email}\n密码：{password}")
+              records.append(f"{email}----{password}")
               consumed.add(email)
           Path("registered_account.txt").write_text(
               ("\n\n".join(records) + "\n") if records else "（没有成功账号）\n",
@@ -831,19 +831,39 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          files = sorted(Path("all_accounts").glob("**/registered_account.txt"))
+          # V7 的完整成功来源是运行数据中的 w1_result.ok=true。
+          # 账号文件仅作为兼容兜底，最终统一输出 email----password。
+          import json
           accounts = []
-          for path in files:
-              for line in path.read_text(encoding="utf-8").splitlines():
-                  line = line.strip()
-                  # 去掉 "API：" 前缀（如果有）
-                  if line.startswith("API："):
-                      line = line[4:].strip()
-                  if line and "----" in line:
-                      accounts.append(line)
-          output = "\n".join(accounts)
+          seen = set()
+          for run_dir in sorted(Path("all_runs").glob("**/run_*")):
+              result_path = run_dir / "w1_result.json"
+              account_path = run_dir / "account_generated.json"
+              if not result_path.is_file() or not account_path.is_file():
+                  continue
+              try:
+                  result = json.loads(result_path.read_text(encoding="utf-8"))
+                  account = json.loads(account_path.read_text(encoding="utf-8"))
+              except (OSError, ValueError):
+                  continue
+              if not result.get("ok"):
+                  continue
+              email = str(account.get("email") or result.get("email") or "").strip()
+              password = str(account.get("password") or "").strip()
+              if email and password and email.casefold() not in seen:
+                  seen.add(email.casefold())
+                  accounts.append(f"{email}----{password}")
+          if not accounts:
+              for path in sorted(Path("all_accounts").glob("**/registered_account.txt")):
+                  for line in path.read_text(encoding="utf-8").splitlines():
+                      line = line.strip()
+                      if line and "----" in line:
+                          email = line.split("----", 1)[0].strip().casefold()
+                          if email not in seen:
+                              seen.add(email)
+                              accounts.append(line)
           Path("all_accounts.txt").write_text(
-              (output + "\n") if output else "（没有成功账号）\n",
+              ("\n".join(accounts) + "\n") if accounts else "（没有成功账号）\n",
               encoding="utf-8",
           )
           consumed = set()

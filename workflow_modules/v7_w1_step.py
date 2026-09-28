@@ -136,72 +136,100 @@ def create_w1_browser(
 
 def login_battle_net(page: FirefoxPage, email: str, password: str) -> bool:
     """
-    在 RuyiPage 浏览器中登录战网
-
+    在 RuyiPage 浏览器中登录战网（分两步：先邮箱，后密码）
+    
+    参考 V6 验证邮箱时的登录逻辑，战网登录是分步骤的：
+    1. 输入邮箱，点击提交
+    2. 等待密码输入框出现
+    3. 输入密码，点击提交
+    4. 等待登录完成
+    
     Args:
         page: RuyiPage 浏览器实例
         email: 账号邮箱
         password: 账号密码
-
+    
     Returns:
         bool: 登录是否成功
     """
     try:
         LOG.info(f"V7 W1 开始登录战网: {email}")
-
-        # 1. 打开战网登录页面
+        
+        # 步骤 1: 打开战网登录页面
         page.get("https://account.battle.net/login")
         time.sleep(2)
-
-        # 2. 输入邮箱
-        email_input = page.ele("#accountName")
+        
+        # 步骤 2: 输入邮箱
+        email_input = page.ele("#accountName", timeout=10)
         if not email_input:
             LOG.error("V7 W1 未找到邮箱输入框")
             return False
-
+        
         email_input.clear()
         email_input.input(email)
         time.sleep(0.5)
-
-        # 3. 输入密码
-        password_input = page.ele("#password")
-        if not password_input:
-            LOG.error("V7 W1 未找到密码输入框")
+        
+        # 步骤 3: 点击提交按钮（提交邮箱）
+        submit_button = page.ele("#submit", timeout=10)
+        if not submit_button:
+            LOG.error("V7 W1 未找到提交按钮")
             return False
-
+        
+        submit_button.click()
+        LOG.info("V7 W1 已提交邮箱，等待密码输入框出现")
+        
+        # 步骤 4: 等待密码输入框出现（最多 30 秒）
+        password_input = None
+        for i in range(30):
+            time.sleep(1)
+            password_input = page.ele("#password")
+            if password_input:
+                LOG.info("V7 W1 密码输入框已出现")
+                break
+            
+            # 检查是否已经登录成功（可能账号已保存密码）
+            current_url = page.url
+            if "account.battle.net/overview" in current_url or "account.battle.net/games" in current_url:
+                LOG.info(f"V7 W1 已自动登录成功: {current_url}")
+                return True
+        
+        if not password_input:
+            LOG.error("V7 W1 未找到密码输入框（超时 30 秒）")
+            return False
+        
+        # 步骤 5: 输入密码
         password_input.clear()
         password_input.input(password)
         time.sleep(0.5)
-
-        # 4. 点击登录按钮
-        login_button = page.ele("#submit")
-        if not login_button:
-            LOG.error("V7 W1 未找到登录按钮")
+        
+        # 步骤 6: 点击提交按钮（提交密码）
+        submit_button = page.ele("#submit", timeout=10)
+        if not submit_button:
+            LOG.error("V7 W1 未找到提交按钮（密码步骤）")
             return False
-
-        login_button.click_self()
-
-        # 5. 等待登录完成
-        LOG.info("V7 W1 等待登录完成（最多 30 秒）")
-
+        
+        submit_button.click()
+        LOG.info("V7 W1 已提交密码，等待登录完成")
+        
+        # 步骤 7: 等待登录完成（最多 30 秒）
         for i in range(30):
             time.sleep(1)
             current_url = page.url
-
+            
             # 检查是否已经跳转到账号管理页面
             if "account.battle.net/overview" in current_url or "account.battle.net/games" in current_url:
-                LOG.info(f"V7 W1 ✅ 登录成功: {current_url}")
+                LOG.info(f"V7 W1 登录成功: {current_url}")
                 return True
-
+            
             # 检查是否有错误提示
             error_elem = page.ele("css:.error-message")
             if error_elem and error_elem.text:
                 LOG.error(f"V7 W1 登录失败: {error_elem.text}")
                 return False
-
+        
         LOG.warning("V7 W1 登录超时（30秒）")
         return False
-
+    
     except Exception as e:
         LOG.exception(f"V7 W1 登录异常: {e}")
         return False

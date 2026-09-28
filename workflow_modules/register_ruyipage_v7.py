@@ -259,6 +259,14 @@ def main() -> int:
             encoding="utf-8",
         )
 
+        # 保存成功账号到 registered_account.txt（格式：账号----密码）
+        # 这是 V7 的核心输出，供 GitHub Actions collect job 汇总
+        if w1_success:
+            registered_account_file = Path("registered_account.txt")
+            account_line = f"{email}----{password}\n"
+            registered_account_file.write_text(account_line, encoding="utf-8")
+            LOG.info(f"V7 已保存成功账号到: {registered_account_file}")
+
         if w1_success:
             LOG.info("=" * 80)
             LOG.info("V7 🎉 完整流程成功：注册 + WoW Trial 创建")

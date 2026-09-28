@@ -841,6 +841,9 @@ jobs:
           for path in files:
               for line in path.read_text(encoding="utf-8").splitlines():
                   line = line.strip()
+                  # 去掉 "API：" 前缀（如果有）
+                  if line.startswith("API："):
+                      line = line[4:].strip()
                   if line and "----" in line:
                       accounts.append(line)
           output = "\n".join(accounts)

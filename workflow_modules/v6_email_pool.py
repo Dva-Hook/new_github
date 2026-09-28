@@ -1,7 +1,11 @@
 # -*- coding: utf-8 -*-
 """V6 supplied-email pool parsing and deterministic job allocation.
 
-Input format (one record per line):
+Input format (one record per line). The first field is always the email; the
+remaining fields are optional:
+    email
+    email----mailbox_password
+    email----mailbox_password----client_id
     email----mailbox_password----client_id----refresh_token
 """
 
@@ -56,15 +60,24 @@ class EmailCredential:
 def parse_credential_line(raw: str, *, source_index: int) -> EmailCredential:
     # Keep the exact non-newline source record for the final API output. Only
     # surrounding whitespace is ignored as it is not part of a credential.
+    #
+    # Accepted shapes, in increasing specificity:
+    #   email
+    #   email----mailbox_password
+    #   email----mailbox_password----client_id
+    #   email----mailbox_password----client_id----refresh_token
+    # V7 reads ``wow1_account.txt`` as ``email----password`` and only needs the
+    # email for registration, so the trailing credential fields are optional.
     line = str(raw or "").strip()
     parts = line.split(DELIMITER, 3)
-    if len(parts) != 4 or not all(part.strip() for part in parts):
+    if not parts or not parts[0].strip():
         raise ValueError(f"邮箱凭证第 {source_index} 行格式错误")
-    email, mailbox_password, client_id, refresh_token = (
-        part.strip() for part in parts
-    )
+    email = parts[0].strip()
     if not EMAIL_RE.fullmatch(email):
         raise ValueError(f"邮箱凭证第 {source_index} 行邮箱格式错误")
+    mailbox_password = parts[1].strip() if len(parts) > 1 else ""
+    client_id = parts[2].strip() if len(parts) > 2 else ""
+    refresh_token = parts[3].strip() if len(parts) > 3 else ""
     return EmailCredential(
         email=email,
         mailbox_password=mailbox_password,

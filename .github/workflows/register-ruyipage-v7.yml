@@ -735,55 +735,41 @@ jobs:
           import json
           from pathlib import Path
 
-          import workflow_runner
-          from v6_email_pool import credential_map
-
-          root = Path("ruyipage_http_v7_register/runs")
-          pool_path = Path("wow1_account.txt")
-          api_by_email = (
-              credential_map(pool_path) if pool_path.is_file() else {}
-          )
+          # 每个 register job 的 registered_account.txt 是注册结果，
+          # w1_result.json 的 ok 才是“注册 + WoW Trial”完整成功标记。
+          # 运行数据 artifact 已包含这两个文件，按 run 目录配对汇总。
+          root = Path("all_runs")
           records = []
           consumed = set()
           seen = set()
-          for account_path in sorted(root.glob("run_*/account_generated.json")):
-              run_dir = account_path.parent
-              result_path = run_dir / "registration_result.json"
-              if not result_path.is_file():
+          for run_dir in sorted(root.glob("**/run_*")):
+              result_path = run_dir / "w1_result.json"
+              account_path = run_dir / "account_generated.json"
+              if not result_path.is_file() or not account_path.is_file():
                   continue
-              result = json.loads(result_path.read_text(encoding="utf-8"))
+              try:
+                  result = json.loads(result_path.read_text(encoding="utf-8"))
+                  account = json.loads(account_path.read_text(encoding="utf-8"))
+              except (OSError, ValueError):
+                  continue
               if not result.get("ok"):
                   continue
-              account = json.loads(account_path.read_text(encoding="utf-8"))
-              email = str(account.get("email") or "")
-              if not email or email.lower() in seen:
+              email = str(account.get("email") or result.get("email") or "")
+              password = str(account.get("password") or "")
+              if not email or not password or email.casefold() in seen:
                   continue
-              seen.add(email.lower())
-              lines = [
-                  f"账号：{email}",
-                  f"密码：{account.get('password', '')}",
-              ]
-              credential = api_by_email.get(email.casefold())
-              if credential is not None:
-                  api_line = credential.raw_line
-                  lines.append(f"API：{api_line}")
-              record = "\n".join(lines)
-              records.append(record)
-              if str(result.get("emailSource") or "") == "pool":
-                  consumed.add(email)
-          if records:
-              Path("registered_account.txt").write_text(
-                  "\n\n".join(records) + "\n", encoding="utf-8"
-              )
-          if consumed:
-              Path("consumed_email.txt").write_text(
-                  "\n".join(sorted(consumed, key=str.casefold)) + "\n",
-                  encoding="utf-8",
-              )
-          print(
-              f"已恢复 {len(records)} 个成功账号，待消费邮箱 {len(consumed)} 个，"
-              f"W1 完成账号 {len(records)} 个"
+              seen.add(email.casefold())
+              records.append(f"账号：{email}\n密码：{password}")
+              consumed.add(email)
+          Path("registered_account.txt").write_text(
+              ("\n\n".join(records) + "\n") if records else "（没有成功账号）\n",
+              encoding="utf-8",
           )
+          Path("consumed_email.txt").write_text(
+              ("\n".join(sorted(consumed, key=str.casefold)) + "\n") if consumed else "",
+              encoding="utf-8",
+          )
+          print(f"已汇总完整成功账号 {len(records)} 个，待删除邮箱 {len(consumed)} 个")
           PY
 
       - name: 上传 V7 运行数据
@@ -829,6 +815,15 @@ jobs:
         with:
           pattern: V7-账号-*
           path: all_accounts
+          merge-multiple: false
+
+      - name: 下载全部 V7 运行数据
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v7
+        with:
+          pattern: V7-*-运行数据-*
+          path: all_runs
           merge-multiple: false
 
       - name: 汇总账号与邮箱状态

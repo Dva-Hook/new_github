@@ -92,14 +92,6 @@ on:
         options:
           - "虚拟邮箱"
           - "待注册邮箱"
-      verify_email:
-        description: "注册成功后是否验证邮箱（仅待注册邮箱生效）"
-        required: true
-        default: "是"
-        type: choice
-        options:
-          - "是"
-          - "否"
 
 concurrency:
   group: ${{ inputs.email_source == '待注册邮箱' && format('V7-待注册邮箱-{0}-{1}', github.repository, github.ref_name) || format('V7-虚拟邮箱-{0}', github.run_id) }}
@@ -121,7 +113,6 @@ jobs:
       browser: ${{ steps.matrix.outputs.browser }}
       network: ${{ steps.matrix.outputs.network }}
       email_source: ${{ steps.matrix.outputs.email_source }}
-      verify_email: ${{ steps.matrix.outputs.verify_email }}
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
@@ -138,7 +129,6 @@ jobs:
           CAPMONSTER_PROXY_MODE_LABEL: ${{ inputs.capmonster_proxy }}
           BROWSER_MODE_LABEL: ${{ inputs.browser }}
           EMAIL_SOURCE_LABEL: ${{ inputs.email_source }}
-          VERIFY_EMAIL_LABEL: ${{ inputs.verify_email }}
           EMAIL_POOL_FILE: "wow1_account.txt"
           YESCAPTCHA_API_KEY: ${{ secrets.YESCAPTCHA_API_KEY || inputs.yescaptcha_key }}
           CAPMONSTER_API_KEY: ${{ secrets.CAPMONSTER_API_KEY || inputs.capmonster_key }}
@@ -213,7 +203,6 @@ jobs:
           network_map = {"直连": "direct", "代理": "proxy"}
           capmonster_proxy_map = {"传代理": "proxy", "不传代理": "proxyless"}
           email_source_map = {"虚拟邮箱": "generated", "待注册邮箱": "pool"}
-          verify_email_map = {"是": "yes", "否": "no"}
           try:
               solver = solver_map[os.environ["SOLVER_MODE_LABEL"].strip()]
               capmonster_proxy_mode = capmonster_proxy_map[
@@ -222,7 +211,6 @@ jobs:
               browser = browser_map[os.environ["BROWSER_MODE_LABEL"].strip()]
               network = network_map[os.environ["NETWORK_MODE_LABEL"].strip()]
               email_source = email_source_map[os.environ["EMAIL_SOURCE_LABEL"].strip()]
-              verify_email = verify_email_map[os.environ["VERIFY_EMAIL_LABEL"].strip()]
           except KeyError as exc:
               raise SystemExit(f"不支持的工作流选项: {exc.args[0]}") from exc
           yescaptcha_key = os.environ.get("YESCAPTCHA_API_KEY", "").strip()
@@ -279,7 +267,6 @@ jobs:
               fp.write(f"browser={browser}\n")
               fp.write(f"network={network}\n")
               fp.write(f"email_source={email_source}\n")
-              fp.write(f"verify_email={verify_email}\n")
           print(
               f"任务数={count} 最大并发={max_parallel} "
               f"求解={os.environ['SOLVER_MODE_LABEL']} "
@@ -287,7 +274,6 @@ jobs:
               f"浏览器={os.environ['BROWSER_MODE_LABEL']} "
               f"网络={os.environ['NETWORK_MODE_LABEL']} "
               f"邮箱来源={os.environ['EMAIL_SOURCE_LABEL']} "
-              f"验证邮箱={os.environ['VERIFY_EMAIL_LABEL']} "
               f"国家={country_name}({country_code})"
           )
           PY
@@ -526,16 +512,6 @@ jobs:
           restore-keys: |
             http-v5-public-static-v1-
 
-      - name: 恢复邮箱验证浏览器静态缓存
-        if: needs.prepare.outputs.email_source == 'pool' && needs.prepare.outputs.verify_email == 'yes'
-        id: email-browser-cache
-        uses: actions/cache/restore@v5
-        with:
-          path: .cache/v5_email_browser_profile
-          key: v5-email-browser-profile-v2-${{ needs.prepare.outputs.network }}-${{ github.run_id }}
-          restore-keys: |
-            v5-email-browser-profile-v2-${{ needs.prepare.outputs.network }}-
-
       - name: 修复缺失的缓存依赖
         if: steps.venv-check.outputs.valid != 'true' || steps.ruyi-runtime.outputs.cache-hit != 'true' || (needs.prepare.outputs.browser == 'cloakbrowser' && steps.cloak-runtime.outputs.cache-hit != 'true')
         env:
@@ -646,7 +622,7 @@ jobs:
           V7_EMAIL_SOURCE: ${{ needs.prepare.outputs.email_source }}
           V7_EMAIL_POOL_FILE: wow1_account.txt
           V7_EMAIL_POOL_INDEX: ${{ matrix.index }}
-          V7_VERIFY_EMAIL: ${{ needs.prepare.outputs.verify_email }}
+          V7_VERIFY_EMAIL: "no"
           RANK_V11_URL: http://127.0.0.1:8765
           YESCAPTCHA_API_KEY: ${{ secrets.YESCAPTCHA_API_KEY || inputs.yescaptcha_key }}
           CAPMONSTER_API_KEY: ${{ secrets.CAPMONSTER_API_KEY || inputs.capmonster_key }}
@@ -655,11 +631,10 @@ jobs:
           EZCAPTCHA_API_KEY: ${{ secrets.EZCAPTCHA_API_KEY || inputs.ezcaptcha_key }}
           V7_CAPMONSTER_PROXY_MODE: ${{ needs.prepare.outputs.capmonster_proxy_mode }}
           V7_STATIC_CACHE_DIR: ${{ github.workspace }}/.cache/v5_public_static
-          V7_EMAIL_BROWSER_CACHE_DIR: ${{ github.workspace }}/.cache/v5_email_browser_profile
           PYTHONUNBUFFERED: "1"
         run: |
           set +e
-          mkdir -p "$V7_STATIC_CACHE_DIR" "$V7_EMAIL_BROWSER_CACHE_DIR"
+          mkdir -p "$V7_STATIC_CACHE_DIR"
           handle_runner_signal() {
             signal="$1"
             echo "收到 Runner 终止信号：SIG${signal}"
@@ -697,12 +672,11 @@ jobs:
                 --email-source "$V7_EMAIL_SOURCE" \
                 --email-pool-file "$V7_EMAIL_POOL_FILE" \
                 --email-pool-index "$V7_EMAIL_POOL_INDEX" \
-                --verify-email "$V7_VERIFY_EMAIL" \
+                --verify-email no \
                 --proxy "$REGISTRATION_PROXY" \
                 --country-probe \
                 "${solver_click_args[@]}" \
                 --static-cache-dir "$V7_STATIC_CACHE_DIR" \
-                --email-browser-cache-dir "$V7_EMAIL_BROWSER_CACHE_DIR" \
                 --rank-v11-url "$RANK_V11_URL"
             last_rc=$?
             echo "V7 第 ${attempt}/3 次尝试退出码：${last_rc}"
@@ -747,33 +721,6 @@ jobs:
           path: .cache/v5_public_static
           key: http-v5-public-static-v1-${{ github.run_id }}
 
-      - name: 保存前清理邮箱验证浏览器身份状态
-        if: always() && needs.prepare.outputs.email_source == 'pool' && needs.prepare.outputs.verify_email == 'yes'
-        id: sanitize-email-browser-cache
-        env:
-          V5_EMAIL_BROWSER_CACHE_DIR: ${{ github.workspace }}/.cache/v5_email_browser_profile
-        run: |
-          .venv/bin/python - <<'PY'
-          import os
-          from pathlib import Path
-          import workflow_runner
-          from v5_email_verifier import sanitize_cached_profile
-
-          cache_dir = Path(os.environ["V5_EMAIL_BROWSER_CACHE_DIR"])
-          removed = sanitize_cached_profile(cache_dir)
-          print(
-              f"邮箱验证缓存清理完成：removed={len(removed)} "
-              f"cache2={(cache_dir / 'cache2').exists()}"
-          )
-          PY
-
-      - name: 保存邮箱验证浏览器静态缓存
-        if: always() && matrix.index == 1 && needs.prepare.outputs.email_source == 'pool' && needs.prepare.outputs.verify_email == 'yes' && steps.sanitize-email-browser-cache.outcome == 'success'
-        uses: actions/cache/save@v5
-        with:
-          path: .cache/v5_email_browser_profile
-          key: v5-email-browser-profile-v2-${{ needs.prepare.outputs.network }}-${{ github.run_id }}
-
       - name: 停止本地 V11 服务
         if: always() && needs.prepare.outputs.solver == 'v11'
         run: |
@@ -789,10 +736,7 @@ jobs:
           from pathlib import Path
 
           import workflow_runner
-          from v6_email_pool import (
-              credential_map,
-              is_email_verification_pending,
-          )
+          from v6_email_pool import credential_map
 
           root = Path("ruyipage_http_v7_register/runs")
           pool_path = Path("wow1_account.txt")
@@ -800,7 +744,6 @@ jobs:
               credential_map(pool_path) if pool_path.is_file() else {}
           )
           records = []
-          pending_records = []
           consumed = set()
           seen = set()
           for account_path in sorted(root.glob("run_*/account_generated.json")):
@@ -826,8 +769,6 @@ jobs:
                   lines.append(f"API：{api_line}")
               record = "\n".join(lines)
               records.append(record)
-              if is_email_verification_pending(result):
-                  pending_records.append(record)
               if str(result.get("emailSource") or "") == "pool":
                   consumed.add(email)
           if records:
@@ -839,14 +780,9 @@ jobs:
                   "\n".join(sorted(consumed, key=str.casefold)) + "\n",
                   encoding="utf-8",
               )
-          if pending_records:
-              Path("email_pending_account.txt").write_text(
-                  "\n\n".join(pending_records) + "\n",
-                  encoding="utf-8",
-              )
           print(
               f"已恢复 {len(records)} 个成功账号，待消费邮箱 {len(consumed)} 个，"
-              f"邮箱待验证 {len(pending_records)} 个"
+              f"W1 完成账号 {len(records)} 个"
           )
           PY
 
@@ -858,7 +794,7 @@ jobs:
           path: |
             rank_v11_server.log
             interrupted_by_runner.txt
-            ruyipage_http_v6_register/runs/**
+            ruyipage_http_v7_register/runs/**
           if-no-files-found: ignore
           compression-level: 6
 
@@ -869,7 +805,6 @@ jobs:
           name: V7-账号-${{ matrix.index }}
           path: |
             registered_account.txt
-            email_pending_account.txt
             consumed_email.txt
             login_form_unconfirmed_email.txt
           if-no-files-found: ignore
@@ -908,21 +843,6 @@ jobs:
               (output + "\n") if output else "（没有成功账号）\n",
               encoding="utf-8",
           )
-          pending_files = sorted(
-              Path("all_accounts").glob("**/email_pending_account.txt")
-          )
-          pending_chunks = [
-              path.read_text(encoding="utf-8").strip()
-              for path in pending_files
-          ]
-          pending_output = "\n\n".join(
-              chunk for chunk in pending_chunks if chunk
-          ).strip()
-          if pending_output:
-              Path("email_pending_accounts.txt").write_text(
-                  pending_output + "\n",
-                  encoding="utf-8",
-              )
           consumed = set()
           for path in Path("all_accounts").glob("**/consumed_email.txt"):
               consumed.update(
@@ -955,7 +875,6 @@ jobs:
           )
           print(
               f"已合并 {len(files)} 个账号文件，成功邮箱 {len(consumed)} 个，"
-              f"邮箱待验证 {len(pending_files)} 个，"
               f"login 表单待复核邮箱 {len(login_form_unconfirmed)} 个"
           )
           PY
@@ -1024,11 +943,3 @@ jobs:
           if-no-files-found: error
           compression-level: 9
 
-      - name: 上传邮箱待验证账号
-        if: ${{ hashFiles('email_pending_accounts.txt') != '' }}
-        uses: actions/upload-artifact@v6
-        with:
-          name: ALL-邮箱待验证
-          path: email_pending_accounts.txt
-          if-no-files-found: error
-          compression-level: 9

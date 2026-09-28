@@ -47,7 +47,7 @@ def _map_v7_environment() -> None:
             os.environ[target_v6] = os.environ[source]
             os.environ[target_v5] = os.environ[source]
 
-    # V7 强制跳过邮箱验证（wow1_account.txt 只有邮箱和密码，没有 client_id/refresh_token）
+    # V7 不做邮箱验证：注册成功后立即进入 W1 创建 WoW Trial。
     os.environ["V6_VERIFY_EMAIL"] = "no"
     os.environ["V5_VERIFY_EMAIL"] = "no"
 
@@ -164,14 +164,14 @@ def _execute_w1_after_registration(
             LOG.info("=" * 80)
         else:
             LOG.warning("=" * 80)
-            LOG.warning("V7 ⚠️ W1 步骤失败：WoW Trial 账号创建失败，但注册流程已完成")
+            LOG.warning("V7 ⚠️ W1 步骤失败：WoW Trial 账号未创建，不删除邮箱池记录")
             LOG.warning("=" * 80)
 
         return w1_success
 
     except Exception as e:
         LOG.exception(f"V7 W1 步骤执行异常: {e}")
-        LOG.warning("V7 W1 步骤失败，但注册流程已完成")
+        LOG.warning("V7 W1 步骤失败，不删除邮箱池记录")
         return False
 
 
@@ -279,13 +279,12 @@ def main() -> int:
             LOG.warning("=" * 80)
             LOG.warning("V7 ⚠️ 注册成功但 W1 步骤失败")
             LOG.warning("=" * 80)
-            # 注册成功，W1 失败不影响退出码
-            return 0
+            return 1
 
     except Exception as e:
         LOG.exception(f"V7 W1 步骤调度失败: {e}")
-        LOG.warning("V7 注册成功但 W1 步骤未执行")
-        return 0
+        LOG.warning("V7 注册成功但 W1 步骤未执行，不删除邮箱池记录")
+        return 1
 
 
 if __name__ == "__main__":

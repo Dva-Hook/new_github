@@ -19,6 +19,7 @@ def test_unified_runner_exposes_every_active_command() -> None:
         "register-v4",
         "register-v5",
         "register-v6",
+        "register-v7",
     }
 
 

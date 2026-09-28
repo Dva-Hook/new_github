@@ -69,6 +69,8 @@ def parse_credential_line(raw: str, *, source_index: int) -> EmailCredential:
     # V7 reads ``wow1_account.txt`` as ``email----password`` and only needs the
     # email for registration, so the trailing credential fields are optional.
     line = str(raw or "").strip()
+    if "|" in line:
+        raise ValueError(f"邮箱凭证第 {source_index} 行格式错误")
     parts = line.split(DELIMITER, 3)
     if not parts or not parts[0].strip():
         raise ValueError(f"邮箱凭证第 {source_index} 行格式错误")

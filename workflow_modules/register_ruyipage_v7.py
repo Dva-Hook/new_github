@@ -264,11 +264,11 @@ def main() -> int:
 
         # 保存成功账号到 registered_account.txt（格式：账号----密码）
         # 这是 V7 的核心输出，供 GitHub Actions collect job 汇总
-        if w1_success:
-            registered_account_file = Path("registered_account.txt")
-            account_line = f"{email}----{password}\n"
-            registered_account_file.write_text(account_line, encoding="utf-8")
-            LOG.info(f"V7 已保存成功账号到: {registered_account_file}")
+        # 即使 W1 失败，只要注册成功就保存账号，方便用户手动处理
+        registered_account_file = Path("registered_account.txt")
+        account_line = f"{email}----{password}\n"
+        registered_account_file.write_text(account_line, encoding="utf-8")
+        LOG.info(f"V7 已保存成功账号到: {registered_account_file}")
 
         if w1_success:
             LOG.info("=" * 80)
@@ -277,7 +277,7 @@ def main() -> int:
             return 0
         else:
             LOG.warning("=" * 80)
-            LOG.warning("V7 ⚠️ 注册成功但 W1 步骤失败")
+            LOG.warning("V7 ⚠️ 注册成功但 W1 步骤失败（账号已保存到 registered_account.txt）")
             LOG.warning("=" * 80)
             return 1
 

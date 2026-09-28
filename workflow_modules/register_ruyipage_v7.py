@@ -32,7 +32,6 @@ def _map_v7_environment() -> None:
         "WOW1_ACCOUNT_FILE",
         "WOW1_ACCOUNT_INDEX",
         "EMAIL_BROWSER_CACHE_DIR",
-        "VERIFY_EMAIL",
         "CAPMONSTER_PROXY_MODE",
         "CAPMONSTER_USER_AGENT_URL",
         "PROXY_DIRECT_HOSTS",
@@ -47,6 +46,10 @@ def _map_v7_environment() -> None:
         if source in os.environ:
             os.environ[target_v6] = os.environ[source]
             os.environ[target_v5] = os.environ[source]
+
+    # V7 强制跳过邮箱验证（wow1_account.txt 只有邮箱和密码，没有 client_id/refresh_token）
+    os.environ["V6_VERIFY_EMAIL"] = "no"
+    os.environ["V5_VERIFY_EMAIL"] = "no"
 
     # V7 特殊映射：wow1_account.txt → email_pool_file
     if "V7_WOW1_ACCOUNT_FILE" in os.environ:

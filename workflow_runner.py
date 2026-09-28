@@ -33,6 +33,7 @@ MODULE_NAMES = (
     "register_ruyipage_v4",
     "register_ruyipage_v5",
     "register_ruyipage_v6",
+    "register_ruyipage_v7",
     "v4_browser_resource_optimizer",
     "v5_cloak_adapter",
     "v5_email_pool",
@@ -42,6 +43,7 @@ MODULE_NAMES = (
     "v5_yescaptcha_solver",
     "v6_email_pool",
     "v6_email_verifier",
+    "v7_w1_step",
 )
 
 

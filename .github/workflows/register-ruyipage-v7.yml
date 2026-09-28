@@ -794,7 +794,7 @@ jobs:
               is_email_verification_pending,
           )
 
-          root = Path("ruyipage_http_v6_register/runs")
+          root = Path("ruyipage_http_v7_register/runs")
           pool_path = Path("wow1_account.txt")
           api_by_email = (
               credential_map(pool_path) if pool_path.is_file() else {}

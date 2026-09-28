@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 import register_ruyipage_v6 as v6
-import v7_email_pool
+import v6_email_pool
 import v7_w1_step
 
 
@@ -181,14 +181,6 @@ def _install_v7_contract() -> None:
     v6._setup_v6_logging = _setup_v7_logging
 
     # V7 使用 wow1_account.txt 作为邮箱源
-    v6.v6_email_pool.select_email_credential = lambda file, index: (
-        v7_email_pool.EmailCredential(
-            email=v7_email_pool.select_email_for_registration(file, index),
-            api_password="",
-            api_token="",
-            raw_line="",
-        )
-    )
 
 
 def main() -> int:

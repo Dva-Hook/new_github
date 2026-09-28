@@ -153,7 +153,7 @@ jobs:
 
           import workflow_runner
           from v5_proxy_pool import load_proxy_pool
-          from v7_email_pool import validate_pool_capacity
+          from v6_email_pool import validate_pool_capacity
 
           def bounded_int(name, raw, upper):
               try:
@@ -717,7 +717,7 @@ jobs:
             if [ "$last_rc" -eq 45 ]; then
               echo "检测到 bootstrap 返回 login 表单：状态不确定，停止重试但保留邮箱，不删除输入"
               if [ "$V7_EMAIL_SOURCE" = "pool" ]; then
-                .venv/bin/python -c 'import os; import workflow_runner; from pathlib import Path; from v7_email_pool import select_email_credential; credential = select_email_credential(os.environ["V7_EMAIL_POOL_FILE"], int(os.environ["V7_EMAIL_POOL_INDEX"])); Path("login_form_unconfirmed_email.txt").write_text(credential.email + "\n", encoding="utf-8"); print(f"已保留待复核邮箱：{credential.email}")'
+                .venv/bin/python -c 'import os; import workflow_runner; from pathlib import Path; from v6_email_pool import select_email_credential; credential = select_email_credential(os.environ["V7_EMAIL_POOL_FILE"], int(os.environ["V7_EMAIL_POOL_INDEX"])); Path("login_form_unconfirmed_email.txt").write_text(credential.email + "\n", encoding="utf-8"); print(f"已保留待复核邮箱：{credential.email}")'
                 marker_rc=$?
                 if [ "$marker_rc" -ne 0 ]; then
                   echo "待复核邮箱标记失败，保留退出码 45"
@@ -789,7 +789,7 @@ jobs:
           from pathlib import Path
 
           import workflow_runner
-          from v7_email_pool import (
+          from v6_email_pool import (
               credential_map,
               is_email_verification_pending,
           )
@@ -968,7 +968,7 @@ jobs:
           from pathlib import Path
 
           import workflow_runner
-          from v7_email_pool import remove_consumed_emails
+          from v6_email_pool import remove_consumed_emails
 
           success_path = Path("pool_removal_emails.txt")
           emails = (

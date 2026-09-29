@@ -793,6 +793,7 @@ jobs:
             registered_account.txt
             consumed_email.txt
             login_form_unconfirmed_email.txt
+            w1_failed_account.txt
           if-no-files-found: ignore
           compression-level: 9
 
@@ -834,6 +835,16 @@ jobs:
           # V7 的完整成功来源是运行数据中的 w1_result.ok=true。
           # 账号文件仅作为兼容兜底，最终统一输出 email----password。
           import json
+          w1_failed = {}
+          for path in sorted(Path("all_accounts").glob("**/w1_failed_account.txt")):
+              for raw_line in path.read_text(encoding="utf-8").splitlines():
+                  line = raw_line.strip()
+                  if "----" not in line:
+                      continue
+                  email, password = (part.strip() for part in line.split("----", 1))
+                  if email and password and "@" in email:
+                      w1_failed.setdefault(email.casefold(), f"{email}----{password}")
+          failed_emails = set(w1_failed)
           accounts = []
           seen = set()
           for run_dir in sorted(Path("all_runs").glob("**/run_*")):
@@ -859,13 +870,31 @@ jobs:
                       line = line.strip()
                       if line and "----" in line:
                           email = line.split("----", 1)[0].strip().casefold()
-                          if email not in seen:
+                          if email not in seen and email not in failed_emails:
                               seen.add(email)
                               accounts.append(line)
           Path("all_accounts.txt").write_text(
               ("\n".join(accounts) + "\n") if accounts else "（没有成功账号）\n",
               encoding="utf-8",
           )
+          successful_emails = {
+              line.split("----", 1)[0].strip().casefold()
+              for line in accounts
+              if "----" in line
+          }
+          w1_failed = {
+              email: line
+              for email, line in w1_failed.items()
+              if email not in successful_emails
+          }
+          w1_failed_path = Path("w1_failed_accounts.txt")
+          if w1_failed:
+              w1_failed_path.write_text(
+                  "\n".join(sorted(w1_failed.values(), key=str.casefold)) + "\n",
+                  encoding="utf-8",
+              )
+          else:
+              w1_failed_path.unlink(missing_ok=True)
           # 完整成功账号就是已消费的邮箱。不能只依赖 job 内的
           # consumed_email.txt，因为旧版 job 可能没有写入该文件。
           consumed = {
@@ -904,7 +933,8 @@ jobs:
           )
           print(
               f"已汇总 {len(accounts)} 个完整成功账号，成功邮箱 {len(consumed)} 个，"
-              f"login 表单待复核邮箱 {len(login_form_unconfirmed)} 个"
+              f"login 表单待复核邮箱 {len(login_form_unconfirmed)} 个，"
+              f"W1 未创建成功 {len(w1_failed)} 个"
           )
           PY
 
@@ -969,6 +999,15 @@ jobs:
             login_form_unconfirmed_emails.txt
             pool_removal_emails.txt
             email_pool_update.json
+          if-no-files-found: error
+          compression-level: 9
+
+      - name: 上传 W1 未创建成功账号
+        if: ${{ hashFiles('w1_failed_accounts.txt') != '' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: ALL-W1未创建成功
+          path: w1_failed_accounts.txt
           if-no-files-found: error
           compression-level: 9
 

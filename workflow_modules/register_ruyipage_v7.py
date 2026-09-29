@@ -22,6 +22,25 @@ _V6_MAIN = v6.main
 LOG = logging.getLogger(__name__)
 
 
+def write_w1_failure_account(
+    email: str,
+    password: str,
+    path: Path | str = "w1_failed_account.txt",
+) -> None:
+    """Write the registered account whose WoW Trial creation failed."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        f"{str(email).strip()}----{str(password).strip()}\n",
+        encoding="utf-8",
+    )
+
+
+def clear_w1_failure_account(path: Path | str = "w1_failed_account.txt") -> None:
+    """Remove a stale W1 failure marker after a later complete success."""
+    Path(path).unlink(missing_ok=True)
+
+
 def _map_v7_environment() -> None:
     """Expose V7 settings to V6."""
     for suffix in (
@@ -271,11 +290,14 @@ def main() -> int:
         LOG.info(f"V7 已保存成功账号到: {registered_account_file}")
 
         if w1_success:
+            clear_w1_failure_account()
             LOG.info("=" * 80)
             LOG.info("V7 🎉 完整流程成功：注册 + WoW Trial 创建")
             LOG.info("=" * 80)
             return 0
         else:
+            write_w1_failure_account(email, password)
+            LOG.info("V7 已保存 W1 未创建成功账号到: w1_failed_account.txt")
             LOG.warning("=" * 80)
             LOG.warning("V7 ⚠️ 注册成功但 W1 步骤失败（账号已保存到 registered_account.txt）")
             LOG.warning("=" * 80)

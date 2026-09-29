@@ -866,7 +866,13 @@ jobs:
               ("\n".join(accounts) + "\n") if accounts else "（没有成功账号）\n",
               encoding="utf-8",
           )
-          consumed = set()
+          # 完整成功账号就是已消费的邮箱。不能只依赖 job 内的
+          # consumed_email.txt，因为旧版 job 可能没有写入该文件。
+          consumed = {
+              line.split("----", 1)[0].strip()
+              for line in accounts
+              if "----" in line
+          }
           for path in Path("all_accounts").glob("**/consumed_email.txt"):
               consumed.update(
                   line.strip()

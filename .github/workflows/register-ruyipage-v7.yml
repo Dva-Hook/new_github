@@ -897,7 +897,7 @@ jobs:
               encoding="utf-8",
           )
           print(
-              f"已合并 {len(files)} 个账号文件，成功邮箱 {len(consumed)} 个，"
+              f"已汇总 {len(accounts)} 个完整成功账号，成功邮箱 {len(consumed)} 个，"
               f"login 表单待复核邮箱 {len(login_form_unconfirmed)} 个"
           )
           PY

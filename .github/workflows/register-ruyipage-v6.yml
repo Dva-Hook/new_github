@@ -110,7 +110,7 @@ permissions:
 
 jobs:
   prepare:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       indices: ${{ steps.matrix.outputs.indices }}
       max_parallel: ${{ steps.matrix.outputs.max_parallel }}
@@ -294,7 +294,7 @@ jobs:
 
   deps-cache:
     needs: prepare
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - name: 检出代码
@@ -436,7 +436,7 @@ jobs:
 
   register:
     needs: [prepare, deps-cache]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -878,7 +878,7 @@ jobs:
   collect:
     needs: [prepare, register]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:

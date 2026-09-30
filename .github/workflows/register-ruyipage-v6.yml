@@ -731,7 +731,7 @@ jobs:
             V6_FALLBACK_PROXY=""
           fi
           if [ -n "$V6_FALLBACK_PROXY" ]; then
-            fallback_endpoint="$(V6_FALLBACK_PROXY="$V6_FALLBACK_PROXY" .venv/bin/python -c 'import os; from urllib.parse import urlsplit; raw=os.environ["V6_FALLBACK_PROXY"]; raw=raw if "://" in raw else "http://"+raw; p=urlsplit(raw); print(f"{p.scheme}://{p.hostname or \"<missing>\"}:{p.port or \"<missing>\"}")')"
+            fallback_endpoint="$(V6_FALLBACK_PROXY="$V6_FALLBACK_PROXY" .venv/bin/python -c 'import os; from urllib.parse import urlsplit; raw=os.environ["V6_FALLBACK_PROXY"]; raw=raw if "://" in raw else "http://"+raw; p=urlsplit(raw); print(p.scheme+"://"+(p.hostname or "<missing>")+":"+str(p.port or "<missing>"))')"
             echo "直连回退代理已加载：${fallback_endpoint}"
           else
             echo "直连回退代理：未加载"

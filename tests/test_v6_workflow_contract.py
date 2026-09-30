@@ -105,7 +105,10 @@ def test_v6_workflow_supports_optional_email_verification() -> None:
 
 
 def test_v6_workflow_repairs_or_rebuilds_invalid_venv_cache() -> None:
-    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    workflow = yaml.load(
+        WORKFLOW.read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
     deps_steps = workflow["jobs"]["deps-cache"]["steps"]
     build_step = next(
         step for step in deps_steps if step.get("name") == "构建 V6 虚拟环境"
@@ -166,6 +169,27 @@ def test_v6_workflow_stops_deterministic_server_rejection_without_retrying() -> 
 
     assert 'if [ "$last_rc" -eq 44 ]; then' in text
     assert "服务端已明确拒绝当前提交" in text
+
+
+def test_v6_direct_mode_can_fallback_once_to_preflighted_proxy() -> None:
+    workflow = yaml.load(
+        WORKFLOW.read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+    inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+    assert inputs["direct_proxy_fallback"]["default"] == "启用"
+    assert inputs["direct_proxy_fallback"]["options"] == ["启用", "禁用"]
+
+    steps = workflow["jobs"]["register"]["steps"]
+    allocation = next(step for step in steps if step.get("name") == "分配网络线路")
+    registration = next(step for step in steps if step.get("name") == "执行 HTTP V6 注册")
+    assert "--preflight" in allocation["run"]
+    assert "V6_FALLBACK_PROXY" in allocation["run"]
+    assert 'run_registration "$REGISTRATION_PROXY"' in registration["run"]
+    assert 'run_registration "$V6_FALLBACK_PROXY"' in registration["run"]
+    assert '[ "$fallback_attempted" = "false" ]' in registration["run"]
+    assert '[ "$last_rc" -eq 44 ]' in registration["run"]
+    assert '[ "$fallback_rc" -eq 44 ]' not in registration["run"]
 
 
 def test_v6_workflow_uses_short_solver_arrow_wait() -> None:

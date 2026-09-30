@@ -230,12 +230,16 @@ def probe_proxy(
                     proxies=proxies,
                     timeout=float(timeout),
                     allow_redirects=False,
+                    verify=False,
                     headers={
                         "Accept": "text/plain,*/*;q=0.1",
                         "Range": "bytes=0-0",
                     },
                 )
                 status = int(response.status_code)
+                # A successful HTTPS request proves that the proxy accepted
+                # CONNECT and credentials.  Treat proxy-auth responses and
+                # all 5xx responses as unusable for registration fallback.
                 ok = 100 <= status < 500 and status != 407
                 checks.append(
                     ProxyProbeCheck(

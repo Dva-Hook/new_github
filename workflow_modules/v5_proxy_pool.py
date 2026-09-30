@@ -80,6 +80,9 @@ def parse_proxy_line(raw: str, source_line: int = 0) -> ProxyRecord:
     if not value:
         raise ValueError("代理行为空")
 
+    if "@" in value and "://" not in value:
+        value = "http://" + value
+
     if "://" in value:
         parsed = urlsplit(value)
         if parsed.scheme.lower() not in {"http", "https", "socks5", "socks5h"}:

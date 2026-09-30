@@ -139,15 +139,15 @@ def parse_proxy(value: Optional[str]) -> ProxySettings:
     if not raw:
         return ProxySettings(None, "direct")
 
-    if "://" not in raw:
+    if "@" not in raw and "://" not in raw:
         parts = raw.split(":", 3)
         if len(parts) not in (2, 4):
             raise ValueError(
                 "代理必须留空，或使用 主机:端口、主机:端口:用户名:密码、URL 格式"
             )
         host, port_text = parts[0].strip(), parts[1].strip()
-        username = parts[2] if len(parts) == 4 else None
-        password = parts[3] if len(parts) == 4 else None
+        username = unquote(parts[2]) if len(parts) == 4 else None
+        password = unquote(parts[3]) if len(parts) == 4 else None
         scheme = "http"
     else:
         parsed = urlsplit(raw)

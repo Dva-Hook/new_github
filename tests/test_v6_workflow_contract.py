@@ -184,6 +184,8 @@ def test_v6_direct_mode_can_fallback_once_to_preflighted_proxy() -> None:
     allocation = next(step for step in steps if step.get("name") == "分配网络线路")
     registration = next(step for step in steps if step.get("name") == "执行 HTTP V6 注册")
     assert "--preflight" in allocation["run"]
+    assert "--output-file \"$fallback_proxy_file\"" in allocation["run"]
+    assert "sed -n 's/^代理已分配" not in allocation["run"]
     assert "V6_FALLBACK_PROXY" in allocation["run"]
     assert 'run_registration "$REGISTRATION_PROXY"' in registration["run"]
     assert 'run_registration "$V6_FALLBACK_PROXY"' in registration["run"]

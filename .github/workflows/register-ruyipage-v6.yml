@@ -624,11 +624,12 @@ jobs:
               --job-count "$JOB_COUNT" \
               --preflight \
               --max-candidates 5 \
-              --probe-timeout 8 2>&1)"; then
+              --probe-timeout 8 \
+              --output-file "$fallback_proxy_file" 2>&1)"; then
               echo "$proxy_output"
-              proxy_url="$(printf '%s\n' "$proxy_output" | sed -n 's/^代理已分配：.*端点=//p' | tail -n 1)"
+              proxy_url="$(head -n 1 "$fallback_proxy_file" 2>/dev/null || true)"
               if [ -z "$proxy_url" ]; then
-                echo "代理预检通过但未能解析分配结果"
+                echo "代理预检通过但未能读取带认证的分配结果"
                 echo "V6_FALLBACK_PROXY=" >> "$GITHUB_ENV"
                 echo "V6_DIRECT_PROXY_FALLBACK=unavailable" >> "$GITHUB_ENV"
                 exit 0

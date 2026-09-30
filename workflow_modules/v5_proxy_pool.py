@@ -325,6 +325,19 @@ def _append_github_env(name: str, value: str) -> None:
         handle.write(f"{name}={value}\n")
 
 
+def _write_proxy_url(path: Path, url: str) -> None:
+    """Write the authenticated URL to a runner-local file without logging it."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"{url}\n", encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        # The workflow still gets the correct value on platforms without POSIX
+        # permission bits; the file is already inside the runner temp directory.
+        pass
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="校验或分配 V5 代理池")
     parser.add_argument("--file", type=Path, required=True)
@@ -336,6 +349,11 @@ def main() -> int:
     parser.add_argument("--probe-timeout", type=float, default=8.0)
     parser.add_argument("--probe-url", action="append", default=[])
     parser.add_argument("--github-env", action="store_true")
+    parser.add_argument(
+        "--output-file",
+        type=Path,
+        help="将带认证的完整代理 URL 写入本地文件，不打印到标准输出",
+    )
     args = parser.parse_args()
 
     records = load_proxy_pool(args.file)
@@ -379,6 +397,8 @@ def main() -> int:
         print(f"::add-mask::{record.url}")
         _append_github_env("REGISTRATION_PROXY", record.url)
         _append_github_env("V5_PROXY_SOURCE_LINE", str(record.source_line))
+    if args.output_file is not None:
+        _write_proxy_url(args.output_file, record.url)
     print(
         f"代理已分配：任务={args.index}，源行={record.source_line}，"
         f"端点={record.display}"

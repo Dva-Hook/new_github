@@ -600,6 +600,10 @@ jobs:
           JOB_COUNT: ${{ inputs.count }}
         run: |
           set -euo pipefail
+          fallback_proxy_file="$RUNNER_TEMP/v6_fallback_proxy_${JOB_INDEX}"
+          fallback_state_file="$RUNNER_TEMP/v6_fallback_state_${JOB_INDEX}"
+          : > "$fallback_proxy_file"
+          printf 'disabled\n' > "$fallback_state_file"
           if [ "$NETWORK_MODE" = "proxy" ]; then
             .venv/bin/python workflow_runner.py proxy-pool \
               --file "$PROXY_FILE" \
@@ -610,6 +614,8 @@ jobs:
               --probe-timeout 8 \
               --github-env
             echo "V6_DIRECT_PROXY_FALLBACK=disabled" >> "$GITHUB_ENV"
+            echo "V6_FALLBACK_PROXY_FILE=$fallback_proxy_file" >> "$GITHUB_ENV"
+            echo "V6_FALLBACK_STATE_FILE=$fallback_state_file" >> "$GITHUB_ENV"
           elif [ "$DIRECT_PROXY_FALLBACK" = "yes" ]; then
             echo "REGISTRATION_PROXY=" >> "$GITHUB_ENV"
             if proxy_output="$(.venv/bin/python workflow_runner.py proxy-pool \
@@ -628,6 +634,9 @@ jobs:
                 exit 0
               fi
               echo "::add-mask::$proxy_url"
+              printf '%s\n' "$proxy_url" > "$fallback_proxy_file"
+              chmod 600 "$fallback_proxy_file"
+              printf 'enabled\n' > "$fallback_state_file"
               echo "V6_FALLBACK_PROXY=$proxy_url" >> "$GITHUB_ENV"
               echo "V6_DIRECT_PROXY_FALLBACK=enabled" >> "$GITHUB_ENV"
               echo "已为直连回退预检并分配代理：任务=$JOB_INDEX"
@@ -642,6 +651,8 @@ jobs:
             echo "V6_DIRECT_PROXY_FALLBACK=disabled" >> "$GITHUB_ENV"
             echo "网络线路：直连"
           fi
+          echo "V6_FALLBACK_PROXY_FILE=$fallback_proxy_file" >> "$GITHUB_ENV"
+          echo "V6_FALLBACK_STATE_FILE=$fallback_state_file" >> "$GITHUB_ENV"
 
       - name: 隐藏打码平台密钥
         if: needs.prepare.outputs.solver == 'yescaptcha' || needs.prepare.outputs.solver == 'capmonster' || needs.prepare.outputs.solver == 'twocaptcha' || needs.prepare.outputs.solver == 'solvecaptcha' || needs.prepare.outputs.solver == 'ezcaptcha'
@@ -709,6 +720,22 @@ jobs:
           set +e
           V6_DIRECT_PROXY_FALLBACK="${V6_DIRECT_PROXY_FALLBACK:-disabled}"
           V6_FALLBACK_PROXY="${V6_FALLBACK_PROXY:-}"
+          V6_FALLBACK_PROXY_FILE="${V6_FALLBACK_PROXY_FILE:-$RUNNER_TEMP/v6_fallback_proxy_${V6_EMAIL_POOL_INDEX}}"
+          V6_FALLBACK_STATE_FILE="${V6_FALLBACK_STATE_FILE:-$RUNNER_TEMP/v6_fallback_state_${V6_EMAIL_POOL_INDEX}}"
+          if [ -s "$V6_FALLBACK_PROXY_FILE" ]; then
+            V6_FALLBACK_PROXY="$(head -n 1 "$V6_FALLBACK_PROXY_FILE")"
+          fi
+          fallback_state="$(head -n 1 "$V6_FALLBACK_STATE_FILE" 2>/dev/null || true)"
+          if [ "$V6_DIRECT_PROXY_FALLBACK" = "enabled" ] && [ "$fallback_state" != "enabled" ]; then
+            echo "回退状态文件未确认启用，禁止误用空代理：state=${fallback_state:-missing}"
+            V6_FALLBACK_PROXY=""
+          fi
+          if [ -n "$V6_FALLBACK_PROXY" ]; then
+            fallback_endpoint="$(V6_FALLBACK_PROXY="$V6_FALLBACK_PROXY" .venv/bin/python -c 'import os; from urllib.parse import urlsplit; raw=os.environ["V6_FALLBACK_PROXY"]; raw=raw if "://" in raw else "http://"+raw; p=urlsplit(raw); print(f"{p.scheme}://{p.hostname or \"<missing>\"}:{p.port or \"<missing>\"}")')"
+            echo "直连回退代理已加载：${fallback_endpoint}"
+          else
+            echo "直连回退代理：未加载"
+          fi
           mkdir -p "$V6_STATIC_CACHE_DIR" "$V6_EMAIL_BROWSER_CACHE_DIR"
           handle_runner_signal() {
             signal="$1"
@@ -793,6 +820,10 @@ jobs:
                 && [ -n "$V6_FALLBACK_PROXY" ]; then
                 fallback_attempted=true
                 echo "直连提交被服务端明确拒绝，使用本 Job 预检代理额外尝试一次"
+                if [ -z "$V6_FALLBACK_PROXY" ]; then
+                  echo "回退代理为空，停止代理回退，避免再次使用直连"
+                  exit 44
+                fi
                 echo "::group::V6 代理回退尝试"
                 run_registration "$V6_FALLBACK_PROXY"
                 fallback_rc=$?

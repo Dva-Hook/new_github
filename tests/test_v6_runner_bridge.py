@@ -35,7 +35,34 @@ def test_verification_bridge_converts_v6_order_to_v5_credential(monkeypatch) -> 
     assert captured["credential"].client_id == "client-id"
     assert captured["credential"].refresh_token == "refresh-token"
     assert captured["account_password"] == "battle-password"
-    assert captured["kwargs"] == {"args": "args"}
+    assert captured["kwargs"]["args"] == "args"
+    assert captured["kwargs"]["runtime_proxy_url"] is None
+    assert captured["kwargs"]["proxy"].enabled is False
+
+
+def test_v6_verification_forces_direct_network(monkeypatch) -> None:
+    captured = {}
+
+    def fake_verify(credential, account_password, **kwargs):
+        captured.update(kwargs)
+        return "verified"
+
+    monkeypatch.setattr(v6, "_V5_VERIFY_REGISTERED_EMAIL", fake_verify)
+    credential = parse_credential_line(
+        "mail@example.com----mail-pass----client-id----refresh-token",
+        source_index=3,
+    )
+    proxy = v6.v5.v4.parse_proxy("proxy.example:8080:user:pass")
+
+    assert v6._verify_registered_email_v6(
+        credential,
+        "battle-password",
+        args=SimpleNamespace(verify_email="yes"),
+        proxy=proxy,
+        runtime_proxy_url="http://127.0.0.1:43210",
+    ) == "verified"
+    assert captured["runtime_proxy_url"] is None
+    assert captured["proxy"].enabled is False
 
 
 def test_v6_parser_names_the_v6_pool_file() -> None:

@@ -107,6 +107,10 @@ def _verify_registered_email_v6(
             status="skipped",
             note="",
         )
+    # Registration may use a proxy (including the direct->proxy fallback), but
+    # post-registration verification must always use the runner's direct route.
+    kwargs["proxy"] = v5.v4.parse_proxy(None)
+    kwargs["runtime_proxy_url"] = None
     return _V5_VERIFY_REGISTERED_EMAIL(
         credential.to_v5(),
         account_password,

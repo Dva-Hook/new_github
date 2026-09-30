@@ -324,6 +324,25 @@ def _inject_proxy_authorization(data: bytes, authorization: Optional[str]) -> by
     return b"\r\n".join(filtered) + b"\r\n\r\n" + remainder
 
 
+def _rewrite_connect_request(
+    data: bytes,
+    authorization: Optional[str],
+) -> bytes:
+    """Normalize a CONNECT request and always apply upstream auth."""
+    header, remainder = _split_header(data)
+    lines = header[:-4].split(b"\r\n")
+    if not lines:
+        raise ValueError("代理 CONNECT 请求为空")
+    filtered = [
+        line
+        for line in lines
+        if not line.lower().startswith((b"proxy-authorization:", b"proxy-connection:"))
+    ]
+    if authorization:
+        filtered.append(f"Proxy-Authorization: {authorization}".encode("latin-1"))
+    return b"\r\n".join(filtered) + b"\r\n\r\n" + remainder
+
+
 def _origin_form_request(data: bytes) -> tuple[bytes, str, int]:
     header, remainder = _split_header(data)
     lines = header[:-4].split(b"\r\n")
@@ -679,7 +698,7 @@ class ProxyTrafficMeter:
             connection_started = True
             if self.upstream.scheme in {"http", "https"}:
                 upstream = self._connect_http_upstream()
-                forwarded = _inject_proxy_authorization(
+                forwarded = _rewrite_connect_request(
                     initial, self.upstream.basic_authorization
                 )
                 self._send_upstream(upstream, forwarded, connection_target)

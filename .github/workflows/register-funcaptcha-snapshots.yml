@@ -37,7 +37,7 @@ permissions:
 
 jobs:
   prepare:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       indices: ${{ steps.matrix.outputs.indices }}
       max_parallel: ${{ steps.matrix.outputs.max_parallel }}
@@ -73,7 +73,7 @@ jobs:
           PY
 
   deps-cache:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: 检出代码
@@ -129,7 +129,7 @@ jobs:
 
   snapshot:
     needs: [prepare, deps-cache]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -250,7 +250,7 @@ jobs:
   collect:
     needs: snapshot
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: 下载多轮 Arkose 题图构件
         if: ${{ inputs.artifact_mode != 'full_debug' }}

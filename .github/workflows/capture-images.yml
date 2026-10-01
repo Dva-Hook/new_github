@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   prepare:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       indices: ${{ steps.gen.outputs.indices }}
     steps:
@@ -34,7 +34,7 @@ jobs:
 
   capture:
     needs: prepare
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -95,7 +95,7 @@ jobs:
   collect:
     needs: capture
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: 下载验证码 JPG 构件
         uses: actions/download-artifact@v7

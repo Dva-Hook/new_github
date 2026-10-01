@@ -41,7 +41,7 @@ concurrency:
 jobs:
   prepare:
     name: 准备账号矩阵（最多256个）
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       indices: ${{ steps.matrix.outputs.indices }}
       max_parallel: ${{ steps.matrix.outputs.max_parallel }}
@@ -123,7 +123,7 @@ jobs:
   deps-cache:
     name: 准备验证依赖
     needs: prepare
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - name: 检出代码
@@ -169,7 +169,7 @@ jobs:
   verify:
     name: 验证账号 ${{ matrix.index }}
     needs: [prepare, deps-cache]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -318,7 +318,7 @@ jobs:
     name: 汇总结果并删除成功账号
     needs: [prepare, verify]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: 检出代码
         uses: actions/checkout@v5

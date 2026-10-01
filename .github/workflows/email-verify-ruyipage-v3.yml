@@ -457,12 +457,30 @@ jobs:
 
       - name: 提交清理后的账号文件
         if: steps.cleanup_accounts.outputs.removed != '0'
+        env:
+          TARGET_BRANCH: ${{ github.ref_name }}
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add oath2_account.v3.txt
-          git commit -m "清理已验证成功的邮箱账号 [skip ci]"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          for attempt in 1 2 3; do
+            git fetch origin "$TARGET_BRANCH"
+            git reset --mixed "origin/$TARGET_BRANCH"
+            git add oath2_account.v3.txt
+            if git diff --cached --quiet; then
+              echo "账号文件已由其他并发运行更新，无需提交"
+              exit 0
+            fi
+            git commit -m "清理已验证成功的邮箱账号 [skip ci]"
+            if git push origin "HEAD:$TARGET_BRANCH"; then
+              echo "账号文件清理结果已提交到 $TARGET_BRANCH"
+              exit 0
+            fi
+            git reset --mixed HEAD~1
+            sleep $((attempt * 2))
+          done
+          echo "账号文件连续三次推送失败"
+          exit 1
 
       - name: 上传全部验证结果
         if: always()

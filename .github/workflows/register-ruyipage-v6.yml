@@ -79,14 +79,6 @@ on:
         options:
           - "直连"
           - "代理"
-      direct_proxy_fallback:
-        description: "直连被服务端明确拒绝后，是否切换到预检代理重试一次"
-        required: true
-        default: "启用"
-        type: choice
-        options:
-          - "启用"
-          - "禁用"
       proxy_file:
         description: "代理池文件路径（仅代理模式使用）"
         required: true
@@ -128,7 +120,6 @@ jobs:
       capmonster_proxy_mode: ${{ steps.matrix.outputs.capmonster_proxy_mode }}
       browser: ${{ steps.matrix.outputs.browser }}
       network: ${{ steps.matrix.outputs.network }}
-      direct_proxy_fallback: ${{ steps.matrix.outputs.direct_proxy_fallback }}
       email_source: ${{ steps.matrix.outputs.email_source }}
       verify_email: ${{ steps.matrix.outputs.verify_email }}
     steps:
@@ -142,7 +133,6 @@ jobs:
           REQUESTED_MAX_PARALLEL: ${{ inputs.max_parallel }}
           REQUESTED_COUNTRY_CODE: ${{ inputs.country_code }}
           NETWORK_MODE_LABEL: ${{ inputs.network }}
-          DIRECT_PROXY_FALLBACK_LABEL: ${{ inputs.direct_proxy_fallback }}
           PROXY_FILE: ${{ inputs.proxy_file }}
           SOLVER_MODE_LABEL: ${{ inputs.solver }}
           CAPMONSTER_PROXY_MODE_LABEL: ${{ inputs.capmonster_proxy }}
@@ -221,7 +211,6 @@ jobs:
           }
           browser_map = {"RuyiPage": "ruyipage", "CloakBrowser": "cloakbrowser"}
           network_map = {"直连": "direct", "代理": "proxy"}
-          direct_proxy_fallback_map = {"启用": "yes", "禁用": "no"}
           capmonster_proxy_map = {"传代理": "proxy", "不传代理": "proxyless"}
           email_source_map = {"虚拟邮箱": "generated", "待注册邮箱": "pool"}
           verify_email_map = {"是": "yes", "否": "no"}
@@ -232,9 +221,6 @@ jobs:
               ]
               browser = browser_map[os.environ["BROWSER_MODE_LABEL"].strip()]
               network = network_map[os.environ["NETWORK_MODE_LABEL"].strip()]
-              direct_proxy_fallback = direct_proxy_fallback_map[
-                  os.environ["DIRECT_PROXY_FALLBACK_LABEL"].strip()
-              ]
               email_source = email_source_map[os.environ["EMAIL_SOURCE_LABEL"].strip()]
               verify_email = verify_email_map[os.environ["VERIFY_EMAIL_LABEL"].strip()]
           except KeyError as exc:
@@ -292,7 +278,6 @@ jobs:
               fp.write(f"capmonster_proxy_mode={capmonster_proxy_mode}\n")
               fp.write(f"browser={browser}\n")
               fp.write(f"network={network}\n")
-              fp.write(f"direct_proxy_fallback={direct_proxy_fallback}\n")
               fp.write(f"email_source={email_source}\n")
               fp.write(f"verify_email={verify_email}\n")
           print(
@@ -301,7 +286,6 @@ jobs:
               f"CapMonster代理={os.environ['CAPMONSTER_PROXY_MODE_LABEL']} "
               f"浏览器={os.environ['BROWSER_MODE_LABEL']} "
               f"网络={os.environ['NETWORK_MODE_LABEL']} "
-              f"直连拒绝后代理回退={os.environ['DIRECT_PROXY_FALLBACK_LABEL']} "
               f"邮箱来源={os.environ['EMAIL_SOURCE_LABEL']} "
               f"验证邮箱={os.environ['VERIFY_EMAIL_LABEL']} "
               f"国家={country_name}({country_code})"
@@ -594,16 +578,11 @@ jobs:
       - name: 分配网络线路
         env:
           NETWORK_MODE: ${{ needs.prepare.outputs.network }}
-          DIRECT_PROXY_FALLBACK: ${{ needs.prepare.outputs.direct_proxy_fallback }}
           PROXY_FILE: ${{ inputs.proxy_file }}
           JOB_INDEX: ${{ matrix.index }}
           JOB_COUNT: ${{ inputs.count }}
         run: |
           set -euo pipefail
-          fallback_proxy_file="$RUNNER_TEMP/v6_fallback_proxy_${JOB_INDEX}"
-          fallback_state_file="$RUNNER_TEMP/v6_fallback_state_${JOB_INDEX}"
-          : > "$fallback_proxy_file"
-          printf 'disabled\n' > "$fallback_state_file"
           if [ "$NETWORK_MODE" = "proxy" ]; then
             .venv/bin/python workflow_runner.py proxy-pool \
               --file "$PROXY_FILE" \
@@ -613,47 +592,10 @@ jobs:
               --max-candidates 5 \
               --probe-timeout 8 \
               --github-env
-            echo "V6_DIRECT_PROXY_FALLBACK=disabled" >> "$GITHUB_ENV"
-            echo "V6_FALLBACK_PROXY_FILE=$fallback_proxy_file" >> "$GITHUB_ENV"
-            echo "V6_FALLBACK_STATE_FILE=$fallback_state_file" >> "$GITHUB_ENV"
-          elif [ "$DIRECT_PROXY_FALLBACK" = "yes" ]; then
-            echo "REGISTRATION_PROXY=" >> "$GITHUB_ENV"
-            if proxy_output="$(.venv/bin/python workflow_runner.py proxy-pool \
-              --file "$PROXY_FILE" \
-              --index "$JOB_INDEX" \
-              --job-count "$JOB_COUNT" \
-              --preflight \
-              --max-candidates 5 \
-              --probe-timeout 8 \
-              --output-file "$fallback_proxy_file" 2>&1)"; then
-              echo "$proxy_output"
-              proxy_url="$(head -n 1 "$fallback_proxy_file" 2>/dev/null || true)"
-              if [ -z "$proxy_url" ]; then
-                echo "代理预检通过但未能读取带认证的分配结果"
-                echo "V6_FALLBACK_PROXY=" >> "$GITHUB_ENV"
-                echo "V6_DIRECT_PROXY_FALLBACK=unavailable" >> "$GITHUB_ENV"
-                exit 0
-              fi
-              echo "::add-mask::$proxy_url"
-              printf '%s\n' "$proxy_url" > "$fallback_proxy_file"
-              chmod 600 "$fallback_proxy_file"
-              printf 'enabled\n' > "$fallback_state_file"
-              echo "V6_FALLBACK_PROXY=$proxy_url" >> "$GITHUB_ENV"
-              echo "V6_DIRECT_PROXY_FALLBACK=enabled" >> "$GITHUB_ENV"
-              echo "已为直连回退预检并分配代理：任务=$JOB_INDEX"
-            else
-              echo "V6_FALLBACK_PROXY=" >> "$GITHUB_ENV"
-              echo "V6_DIRECT_PROXY_FALLBACK=unavailable" >> "$GITHUB_ENV"
-              echo "直连回退代理预检失敗：本 Job 仍先按直连运行，若被明确拒绝则无代理可切换"
-            fi
           else
             echo "REGISTRATION_PROXY=" >> "$GITHUB_ENV"
-            echo "V6_FALLBACK_PROXY=" >> "$GITHUB_ENV"
-            echo "V6_DIRECT_PROXY_FALLBACK=disabled" >> "$GITHUB_ENV"
             echo "网络线路：直连"
           fi
-          echo "V6_FALLBACK_PROXY_FILE=$fallback_proxy_file" >> "$GITHUB_ENV"
-          echo "V6_FALLBACK_STATE_FILE=$fallback_state_file" >> "$GITHUB_ENV"
 
       - name: 隐藏打码平台密钥
         if: needs.prepare.outputs.solver == 'yescaptcha' || needs.prepare.outputs.solver == 'capmonster' || needs.prepare.outputs.solver == 'twocaptcha' || needs.prepare.outputs.solver == 'solvecaptcha' || needs.prepare.outputs.solver == 'ezcaptcha'
@@ -699,7 +641,6 @@ jobs:
       - name: 执行 HTTP V6 注册
         env:
           NETWORK_MODE: ${{ needs.prepare.outputs.network }}
-          DIRECT_PROXY_FALLBACK: ${{ needs.prepare.outputs.direct_proxy_fallback }}
           V6_SOLVER: ${{ needs.prepare.outputs.solver }}
           V6_BROWSER: ${{ needs.prepare.outputs.browser }}
           V6_COUNTRY: ${{ needs.prepare.outputs.country_code }}
@@ -719,24 +660,6 @@ jobs:
           PYTHONUNBUFFERED: "1"
         run: |
           set +e
-          V6_DIRECT_PROXY_FALLBACK="${V6_DIRECT_PROXY_FALLBACK:-disabled}"
-          V6_FALLBACK_PROXY="${V6_FALLBACK_PROXY:-}"
-          V6_FALLBACK_PROXY_FILE="${V6_FALLBACK_PROXY_FILE:-$RUNNER_TEMP/v6_fallback_proxy_${V6_EMAIL_POOL_INDEX}}"
-          V6_FALLBACK_STATE_FILE="${V6_FALLBACK_STATE_FILE:-$RUNNER_TEMP/v6_fallback_state_${V6_EMAIL_POOL_INDEX}}"
-          if [ -s "$V6_FALLBACK_PROXY_FILE" ]; then
-            V6_FALLBACK_PROXY="$(head -n 1 "$V6_FALLBACK_PROXY_FILE")"
-          fi
-          fallback_state="$(head -n 1 "$V6_FALLBACK_STATE_FILE" 2>/dev/null || true)"
-          if [ "$V6_DIRECT_PROXY_FALLBACK" = "enabled" ] && [ "$fallback_state" != "enabled" ]; then
-            echo "回退状态文件未确认启用，禁止误用空代理：state=${fallback_state:-missing}"
-            V6_FALLBACK_PROXY=""
-          fi
-          if [ -n "$V6_FALLBACK_PROXY" ]; then
-            fallback_endpoint="$(V6_FALLBACK_PROXY="$V6_FALLBACK_PROXY" .venv/bin/python -c 'import os; from urllib.parse import urlsplit; raw=os.environ["V6_FALLBACK_PROXY"]; raw=raw if "://" in raw else "http://"+raw; p=urlsplit(raw); print(p.scheme+"://"+(p.hostname or "<missing>")+":"+str(p.port or "<missing>"))')"
-            echo "直连回退代理已加载：${fallback_endpoint}"
-          else
-            echo "直连回退代理：未加载"
-          fi
           mkdir -p "$V6_STATIC_CACHE_DIR" "$V6_EMAIL_BROWSER_CACHE_DIR"
           handle_runner_signal() {
             signal="$1"
@@ -764,7 +687,6 @@ jobs:
             )
           fi
           last_rc=1
-          fallback_attempted=false
           run_registration() {
             local proxy_url="$1"
             xvfb-run -a --server-args="-screen 0 1920x1080x24" \
@@ -814,31 +736,6 @@ jobs:
               exit 42
             fi
             if [ "$last_rc" -eq 44 ]; then
-              if [ "$NETWORK_MODE" = "direct" ] \
-                && [ "$DIRECT_PROXY_FALLBACK" = "yes" ] \
-                && [ "$V6_DIRECT_PROXY_FALLBACK" = "enabled" ] \
-                && [ "$fallback_attempted" = "false" ] \
-                && [ -n "$V6_FALLBACK_PROXY" ]; then
-                fallback_attempted=true
-                echo "直连提交被服务端明确拒绝，使用本 Job 预检代理额外尝试一次"
-                if [ -z "$V6_FALLBACK_PROXY" ]; then
-                  echo "回退代理为空，停止代理回退，避免再次使用直连"
-                  exit 44
-                fi
-                echo "::group::V6 代理回退尝试"
-                run_registration "$V6_FALLBACK_PROXY"
-                fallback_rc=$?
-                echo "V6 代理回退尝试退出码：${fallback_rc}"
-                echo "::endgroup::"
-                if [ "$fallback_rc" -eq 0 ]; then
-                  exit 0
-                fi
-                if [ "$fallback_rc" -eq 45 ] && [ "$V6_EMAIL_SOURCE" = "pool" ]; then
-                  .venv/bin/python -c 'import os; import workflow_runner; from pathlib import Path; from v6_email_pool import select_email_credential; credential = select_email_credential(os.environ["V6_EMAIL_POOL_FILE"], int(os.environ["V6_EMAIL_POOL_INDEX"])); Path("login_form_unconfirmed_email.txt").write_text(credential.email + "\\n", encoding="utf-8"); print(f"已保留待复核邮箱：{credential.email}")'
-                fi
-                echo "代理回退未成功，停止当前 Job，不再切换或重复代理注册"
-                exit "$fallback_rc"
-              fi
               echo "captcha-gate 服务端已明确拒绝当前提交，停止无效重试；保留诊断结果"
               exit 44
             fi

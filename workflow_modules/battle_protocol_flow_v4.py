@@ -565,6 +565,39 @@ def playwright_cookies_from_records(
     return result
 
 
+_BIDI_SAME_SITE_VALUES = frozenset({"none", "lax", "strict", "default"})
+
+
+def to_bidi_cookies(
+    cookies: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """把 Playwright 风格的 cookie 归一化成 BiDi ``storage.setCookie`` 可用形式。
+
+    ``playwright_cookies()`` 里的 ``sameSite`` 是首字母大写的
+    ``Strict``/``Lax``/``None``，但 Firefox WebDriver BiDi 只接受小写的
+    ``none``/``lax``/``strict``/``default``，且 RuyiPage 会原样透传该字段，
+    因此注入前必须转成小写，否则整个 ``set_cookies`` 调用会以
+    ``BiDiError: Expected "sameSite" to be one of ...`` 失败。
+
+    只供 RuyiPage/BiDi 路径使用；CloakBrowser 走 Playwright 的
+    ``add_cookies``，仍需保留 ``playwright_cookies()`` 的原始大小写。
+    """
+
+    result: list[dict[str, Any]] = []
+    for item in cookies:
+        cookie = dict(item)
+        value = cookie.get("sameSite")
+        lowered = value.strip().lower() if isinstance(value, str) else ""
+        if lowered in _BIDI_SAME_SITE_VALUES:
+            cookie["sameSite"] = lowered
+        else:
+            # 缺失、null 或无法识别的取值都不该发给 BiDi：直接移除字段，
+            # 让 Firefox 使用自己的默认值，而不是让整个 set_cookies 失败。
+            cookie.pop("sameSite", None)
+        result.append(cookie)
+    return result
+
+
 def merge_playwright_cookies(cookie_store: Any, records: Sequence[Mapping[str, Any]]) -> None:
     for item in records:
         name = str(item.get("name") or "")
@@ -1084,5 +1117,6 @@ __all__ = [
     "playwright_cookies_from_records",
     "serialize_cookie_jar",
     "step_from_action",
+    "to_bidi_cookies",
     "validate_transition",
 ]

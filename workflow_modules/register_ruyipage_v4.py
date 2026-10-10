@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
-from battle_protocol_flow_v4 import BattleProtocolClient, PersistentFlowState
+from battle_protocol_flow_v4 import BattleProtocolClient, PersistentFlowState, to_bidi_cookies
 from proxy_traffic_meter import ProxyTrafficMeter
 from v4_browser_resource_optimizer import BrowserResourceOptimizer, MIB
 
@@ -781,7 +781,8 @@ def recover_blob_with_ruyi(
 ) -> dict[str, Any]:
     """Fallback for deployments where the captcha HTML omits the blob."""
 
-    cookies = client.playwright_cookies()
+    # RuyiPage 走 Firefox WebDriver BiDi，只接受小写的 sameSite 取值。
+    cookies = to_bidi_cookies(client.playwright_cookies())
     if cookies:
         page.set_cookies(cookies)
     base.write_json(

@@ -15,3 +15,10 @@ flat_screenshots/
 .cache/v4_public_static/
 .pytest-tmp-*/
 *.zip
+
+# ruyipage_browser_register/ 捆绑的 Firefox 运行时（约 344 MB）。
+# 只跟踪分析脚本，浏览器二进制不入库。首次使用需自行放置：
+#   D:\Project\ruyipage_test\firefox  →  ruyipage_browser_register/firefox
+# 或改用 ruyipage 自动解析的 Firefox（resolve_firefox_path）。
+ruyipage_browser_register/firefox/
+ruyipage_browser_register/runs/

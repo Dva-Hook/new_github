@@ -574,30 +574,67 @@ def extract_blob_from_body(body: str) -> Optional[str]:
     return None
 
 
+# 这些属性的值本身就是 blob 本体，而不是内嵌 blob 参数的 form。
+# 现行页面：data-captcha-integrity-token；旧页面：data-arkose-* / data-exchange-data。
+BLOB_CARRYING_ATTRIBUTES = (
+    "data-captcha-integrity-token",
+    "data-arkose-exchange-data",
+    "data-arkose-data",
+    "data-exchange-data",
+)
+
+
+def blob_from_runtime_value(attribute: str, raw: Any) -> Optional[str]:
+    """从 DOM 属性值里取出 blob。
+
+    属性值有两种形态：新款页面直接放 blob 本体，旧款页面则是带 blob 参数的
+    form/URL。先按“本体”试，再回退到参数解析。
+    """
+
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    if str(attribute or "").lower() in BLOB_CARRYING_ATTRIBUTES:
+        candidate = unquote(text).replace("\\/", "/")
+        if len(candidate) >= 80 and not candidate.lower().startswith(
+            ("http://", "https://", "//", "blob:")
+        ):
+            return candidate
+    return extract_blob_from_body(text)
+
+
 def try_extract_blob_from_runtime(page) -> Optional[str]:
     """Best-effort blob extraction from DOM/runtime attributes.
 
     CDP 版从 /fc/gt2/ POST body 抓 blob。Firefox BiDi 有时抓不到子 frame 的
     request body，所以这里补一个 DOM 兜底：扫描 capture input / scripts /
-    iframes 里可能出现的 data[blob]、blob、bda 参数。
+    iframes 里可能出现的 data[blob]、blob、bda 参数，以及直接承载 blob 的
+    data-captcha-integrity-token（现行页面）/ data-arkose-*（旧页面）。
     """
     js = r"""return (() => {
+      const ATTRS = ['data-captcha-integrity-token','data-captcha-src','data-arkose-src','data-exchange-data','data-arkose-data','value'];
       const out = [];
-      const push = v => { if (v && typeof v === 'string') out.push(v); };
-      const cap = document.querySelector('#capture-arkose, input[name="arkose"]');
-      if (cap) {
-        ['data-arkose-src','data-exchange-data','data-arkose-data','value'].forEach(k => push(cap.getAttribute(k) || cap[k] || ''));
-      }
+      const push = (el) => {
+        ATTRS.forEach(k => { const v = el.getAttribute(k) || el[k]; if (v && typeof v === 'string') out.push({k: k, v: v}); });
+      };
+      const cap = document.querySelector('#capture-captcha, #capture-arkose, input[name="captcha"], input[name="arkose"]');
+      if (cap) push(cap);
       document.querySelectorAll('script[src],iframe[src],input').forEach(el => {
-        ['src','data-arkose-src','data-exchange-data','data-arkose-data','value'].forEach(k => push(el.getAttribute(k) || el[k] || ''));
+        const src = el.getAttribute('src') || el.src;
+        if (src && typeof src === 'string') out.push({k: 'src', v: src});
+        push(el);
       });
-      return Array.from(new Set(out)).slice(0, 80);
+      const seen = new Set();
+      return out.filter(x => { const t = x.k + '\u0000' + x.v; if (seen.has(t)) return false; seen.add(t); return true; }).slice(0, 160);
     })();"""
     for ctx in all_contexts(page):
         with contextlib.suppress(Exception):
             vals = ctx.run_js(js, timeout=3) or []
-            for val in vals:
-                blob = extract_blob_from_body(str(val))
+            for item in vals:
+                if isinstance(item, dict):
+                    blob = blob_from_runtime_value(item.get("k"), item.get("v"))
+                else:
+                    blob = blob_from_runtime_value("", item)
                 if blob:
                     return blob
     return None
@@ -619,9 +656,9 @@ def detect_arkose_context(page, catcher: Optional[RuyiArkoseCatcher]) -> Dict[st
 
     js = """return (() => {
       const candidates = [];
-      const capture = document.querySelector('#capture-arkose');
+      const capture = document.querySelector('#capture-captcha, #capture-arkose, input[name="captcha"], input[name="arkose"]');
       if (capture) {
-        const src = capture.getAttribute('data-arkose-src') || '';
+        const src = capture.getAttribute('data-captcha-src') || capture.getAttribute('data-arkose-src') || '';
         if (src) candidates.push(src);
       }
       document.querySelectorAll('script[src], iframe[src]').forEach(el => {
@@ -630,7 +667,7 @@ def detect_arkose_context(page, catcher: Optional[RuyiArkoseCatcher]) -> Dict[st
       });
       return {
         hasCaptureInput: !!capture,
-        dataArkoseSrc: capture ? (capture.getAttribute('data-arkose-src') || '') : '',
+        dataArkoseSrc: capture ? (capture.getAttribute('data-captcha-src') || capture.getAttribute('data-arkose-src') || '') : '',
         candidates: Array.from(new Set(candidates))
       };
     })();"""
@@ -911,9 +948,11 @@ def inject_token_to_original(page, token: str) -> Dict[str, Any]:
             document.querySelector('form');
           if (!form) return {ok:false, reason:'no-form'};
           let arkose =
+            form.querySelector('input[name="captcha"]') ||
             form.querySelector('input[name="arkose"]') ||
+            document.querySelector('#capture-captcha') ||
             document.querySelector('#capture-arkose') ||
-            document.querySelector('input[name="arkose"]');
+            document.querySelector('input[name="captcha"], input[name="arkose"]');
           if (!arkose) return {ok:false, reason:'no-arkose-input'};
           const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
           if (setter) setter.call(arkose, token);

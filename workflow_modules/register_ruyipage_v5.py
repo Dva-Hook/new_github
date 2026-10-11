@@ -23,7 +23,12 @@ import requests
 
 import register_ruyipage_v4 as v4
 import v5_yescaptcha_solver
-from battle_protocol_flow_v4 import BattleProtocolClient, PersistentFlowState
+from battle_protocol_flow_v4 import (
+    BattleProtocolClient,
+    PersistentFlowState,
+    UnsupportedCaptchaProvider,
+    ensure_supported_captcha_provider,
+)
 from proxy_traffic_meter import ProxyTrafficMeter
 from v5_cloak_adapter import (
     CloakArkoseBlobCatcher,
@@ -2569,6 +2574,8 @@ def main() -> int:
         arkose["websiteURL"] = str(
             arkose.get("websiteURL") or args.entry_url
         )
+        # 声明为 KASADA 等非 Arkose provider 时立即停止，不再按 Arkose 盲跑重试。
+        ensure_supported_captcha_provider(arkose)
         traffic_snapshots["captchaGate"] = v4.capture_proxy_traffic_snapshot(
             traffic_meter
         )
@@ -3003,17 +3010,20 @@ def main() -> int:
         if isinstance(exc, v4.v3.UnsupportedCaptchaQuestion):
             failure["unsupportedCaptcha"] = True
             failure["challenge"] = exc.details
+        if isinstance(exc, UnsupportedCaptchaProvider):
+            failure["unsupportedCaptchaProvider"] = True
+            failure["provider"] = exc.details
         browser_traffic = v4.read_json_object(out / "browser_traffic.json")
         if browser_traffic:
             failure["browserTraffic"] = browser_traffic
         if submission_diagnosis is not None:
             failure["captchaSubmissionDiagnosis"] = submission_diagnosis
         write_json(out / "summary.json", failure)
-        return (
-            v4.v3.UNSUPPORTED_CAPTCHA_EXIT_CODE
-            if isinstance(exc, v4.v3.UnsupportedCaptchaQuestion)
-            else 1
-        )
+        if isinstance(
+            exc, (v4.v3.UnsupportedCaptchaQuestion, UnsupportedCaptchaProvider)
+        ):
+            return v4.v3.UNSUPPORTED_CAPTCHA_EXIT_CODE
+        return 1
     finally:
         if client is not None:
             with contextlib.suppress(Exception):

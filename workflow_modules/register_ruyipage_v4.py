@@ -27,7 +27,13 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
-from battle_protocol_flow_v4 import BattleProtocolClient, PersistentFlowState, to_bidi_cookies
+from battle_protocol_flow_v4 import (
+    BattleProtocolClient,
+    PersistentFlowState,
+    UnsupportedCaptchaProvider,
+    ensure_supported_captcha_provider,
+    to_bidi_cookies,
+)
 from proxy_traffic_meter import ProxyTrafficMeter
 from v4_browser_resource_optimizer import BrowserResourceOptimizer, MIB
 
@@ -677,6 +683,7 @@ def public_arkose_context(value: Mapping[str, Any]) -> dict[str, Any]:
     token = str(value.get("token") or "")
     return {
         "source": value.get("source"),
+        "provider": value.get("provider"),
         "siteKey": value.get("siteKey"),
         "surl": value.get("surl"),
         "websiteURL": value.get("websiteURL"),
@@ -1113,6 +1120,8 @@ def main() -> int:
         arkose = dict(state.data.get("arkose") or {})
         if not arkose.get("blob"):
             arkose = client.recover_arkose_from_last_response()
+        # 声明为 KASADA 等非 Arkose provider 时立即停止，不再按 Arkose 盲跑重试。
+        ensure_supported_captcha_provider(arkose)
         traffic_snapshots["captchaGate"] = capture_proxy_traffic_snapshot(traffic_meter)
         LOG.info(
             "Arkose 上下文：来源=%s，站点密钥=%s，blob 长度=%s",
@@ -1245,15 +1254,18 @@ def main() -> int:
         if isinstance(exc, v3.UnsupportedCaptchaQuestion):
             failure["unsupportedCaptcha"] = True
             failure["challenge"] = exc.details
+        if isinstance(exc, UnsupportedCaptchaProvider):
+            failure["unsupportedCaptchaProvider"] = True
+            failure["provider"] = exc.details
         browser_traffic = read_json_object(out / "browser_traffic.json")
         if browser_traffic:
             failure["browserTraffic"] = browser_traffic
         write_json(out / "summary.json", failure)
-        return (
-            v3.UNSUPPORTED_CAPTCHA_EXIT_CODE
-            if isinstance(exc, v3.UnsupportedCaptchaQuestion)
-            else 1
-        )
+        if isinstance(
+            exc, (v3.UnsupportedCaptchaQuestion, UnsupportedCaptchaProvider)
+        ):
+            return v3.UNSUPPORTED_CAPTCHA_EXIT_CODE
+        return 1
     finally:
         if client is not None:
             with contextlib.suppress(Exception):

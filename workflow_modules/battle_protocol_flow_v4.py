@@ -215,6 +215,22 @@ def _identity(identity: Mapping[str, Any], key: str) -> str:
     return str(identity.get(key) or "")
 
 
+# 验证码 token 的字段名随页面版本变化：旧版是 arkose，现行页面是 captcha。
+# 提交时必须用表单里实际存在的控件名，否则服务端会忽略 token 并回退到
+# "Field is required"（captcha-gate 停留在原地）。
+_CAPTCHA_FIELD_CANDIDATES = ("captcha", "arkose", "fc-token", "funcaptcha-token")
+
+
+def _captcha_field_name(form: "FormSnapshot", preferred: str = "captcha") -> str:
+    """挑选当前 captcha-gate 表单里真正存在的验证码字段名。"""
+
+    names = {item.name for item in form.controls if not item.disabled}
+    for candidate in (preferred, *_CAPTCHA_FIELD_CANDIDATES):
+        if candidate in names:
+            return candidate
+    return preferred
+
+
 def build_step_fields(
     form: FormSnapshot,
     step: str,
@@ -283,11 +299,14 @@ def build_step_fields(
     names_and_values = {
         "set-password": ("password", _identity(identity, "password")),
         "set-battletag": ("battletag", _identity(identity, "battle_tag")),
-        "captcha-gate": ("arkose", str(arkose_token)),
     }
     if step in names_and_values:
         name, value = names_and_values[step]
         return _without_names(hidden, {name}) + [(name, value)]
+    if step == "captcha-gate":
+        # 字段名以表单实际控件为准（旧版 arkose / 现行页面 captcha）。
+        name = _captcha_field_name(form)
+        return _without_names(hidden, {name}) + [(name, str(arkose_token))]
     if step == "row-redirect-to-tassadar":
         return list(hidden)
     raise ValueError(f"不支持的流程步骤：{step}")
@@ -393,10 +412,62 @@ def _first_valid_blob(candidates: Iterable[tuple[str, str]]) -> tuple[str, str]:
     return "", ""
 
 
+# 验证码 provider 标识：现行页面用 data-captcha-provider 声明，取值 ARKOSE / KASADA。
+_PROVIDER_PATTERN = re.compile(
+    r"data-captcha-provider\s*=\s*[\"']([a-z0-9_-]+)[\"']", re.I
+)
+
+# 本流程只实现了 Arkose（FunCaptcha）求解与提交。出现别家 provider 时若继续
+# 按 Arkose 处理，只会白白跑完三次重试仍失败，因此显式报错并停止重试。
+SUPPORTED_CAPTCHA_PROVIDER = "ARKOSE"
+
+
+class UnsupportedCaptchaProvider(RuntimeError):
+    """captcha-gate 声明的验证码 provider 不是本流程支持的 Arkose。"""
+
+    def __init__(self, details: Mapping[str, Any]) -> None:
+        self.details = dict(details)
+        super().__init__(
+            "unsupported captcha provider: "
+            f"provider={self.details.get('provider')!r} "
+            f"websiteURL={self.details.get('websiteURL')!r}"
+        )
+
+
+def detect_captcha_provider(html: str) -> str:
+    """识别 captcha-gate 表单声明的验证码 provider；未声明时返回空串。"""
+
+    match = _PROVIDER_PATTERN.search(str(html or ""))
+    return match.group(1).upper() if match else ""
+
+
+def ensure_supported_captcha_provider(context: Mapping[str, Any]) -> str:
+    """校验上下文声明的 provider。
+
+    未声明 provider（旧页面没有该属性）时按 Arkose 放行，保持向后兼容；
+    一旦明确声明为其它 provider，就抛 ``UnsupportedCaptchaProvider``。
+    """
+
+    provider = str(context.get("provider") or "").strip().upper()
+    if provider and provider != SUPPORTED_CAPTCHA_PROVIDER:
+        raise UnsupportedCaptchaProvider(
+            {
+                "provider": provider,
+                "websiteURL": str(context.get("websiteURL") or ""),
+                "blobLength": len(str(context.get("blob") or "")),
+            }
+        )
+    return provider
+
+
 def detect_arkose_context(html: str, website_url: str) -> dict[str, Any]:
     text = html_lib.unescape(str(html or ""))
     candidates: list[tuple[str, str]] = []
     patterns = (
+        # 现行页面：blob 放在 #capture-captcha 的 data-captcha-integrity-token 里
+        # （旧版对应 data-arkose-exchange-data）。经验证该值与运行期捕获的 blob
+        # sha256 完全一致，因此可以纯 HTTP 解析，无需浏览器兜底。
+        ("html:data-captcha-integrity-token", r"data-captcha-integrity-token\s*=\s*[\"']([^\"']{80,10000})[\"']"),
         ("html:data-arkose-exchange-data", r"data-arkose-exchange-data\s*=\s*[\"']([^\"']{80,10000})[\"']"),
         ("html:json-blob", r"[\"']blob[\"']\s*:\s*[\"']([^\"']{80,10000})[\"']"),
         ("html:data-blob", r"data\[blob\]\s*[=:]\s*[\"']?([^&\"'\s<]{80,10000})"),
@@ -409,8 +480,9 @@ def detect_arkose_context(html: str, website_url: str) -> dict[str, Any]:
     site_key = ""
     for pattern in (
         r"[\"'](?:publicKey|public_key|siteKey|pkey)[\"']\s*:\s*[\"']([0-9a-f-]{36})[\"']",
-        r"/v\d+/([0-9a-f-]{36})/api\.js",
-        r"/fc/gt2/public_key/([0-9a-f-]{36})",
+        # 现行页面：data-captcha-src="//host/v2/<siteKey>/api.js"，也可能省协议。
+        r"/(?:v\d+|fc/gt2/public_key)/([0-9a-f-]{36})/api\.js",
+        r"/(?:v\d+|fc/gt2/public_key)/([0-9a-f-]{36})",
         r"data-pkey=[\"']([0-9a-f-]{36})[\"']",
     ):
         match = re.search(pattern, text, re.I)
@@ -421,7 +493,8 @@ def detect_arkose_context(html: str, website_url: str) -> dict[str, Any]:
     surl = ""
     for pattern in (
         r"[\"']surl[\"']\s*:\s*[\"'](https?://[^\"']+)[\"']",
-        r"//([a-z0-9.-]*arkoselabs\.com)/v\d+/",
+        # 先行匹配带协议或协议相对的 arkoselabs 主机，兼容 data-captcha-src。
+        r"(?:https?:)?//([a-z0-9.-]*arkoselabs\.com)/",
         r"(https://[a-z0-9.-]*arkoselabs\.com)",
     ):
         match = re.search(pattern, text, re.I)
@@ -435,6 +508,7 @@ def detect_arkose_context(html: str, website_url: str) -> dict[str, Any]:
         "surl": surl,
         "websiteURL": str(website_url),
         "source": source or "none",
+        "provider": detect_captcha_provider(text),
     }
 
 
@@ -1111,7 +1185,9 @@ __all__ = [
     "build_step_fields",
     "classify_registration_response",
     "detect_arkose_context",
+    "detect_captcha_provider",
     "encode_multipart",
+    "ensure_supported_captcha_provider",
     "merge_playwright_cookies",
     "parse_flow_form",
     "playwright_cookies_from_records",

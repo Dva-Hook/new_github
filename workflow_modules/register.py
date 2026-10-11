@@ -814,11 +814,11 @@ class CapMonsterFunCaptchaSolver:
         except Exception:
             pass
 
-        caps = page.locator('#capture-arkose').all()
+        caps = page.locator('#capture-captcha, #capture-arkose').all()
         if caps:
             result['found'] = True
-            result['fcTokenField'] = '#capture-arkose'
-            dsrc = caps[0].get_attribute('data-arkose-src') or ''
+            result['fcTokenField'] = '#capture-captcha'
+            dsrc = caps[0].get_attribute('data-captcha-src') or caps[0].get_attribute('data-arkose-src') or ''
             m = re.search(r'/v\d+/([0-9A-F-]+)/api\.js', dsrc, re.I)
             if m: result['siteKey'] = m.group(1)
             sm = re.search(r'//([a-zA-Z0-9_.-]*arkoselabs\.com)', dsrc, re.I)
@@ -1053,7 +1053,7 @@ class CapMonsterFunCaptchaSolver:
                 ([token]) => {
                     var form = document.querySelector('form#flow-form') || document.querySelector('form[action*="captcha-gate"]');
                     if (!form) return {ok:false, reason:'no-form'};
-                    var arkose = form.querySelector('input[name="arkose"]') || document.querySelector('#capture-arkose');
+                    var arkose = form.querySelector('input[name="captcha"]') || form.querySelector('input[name="arkose"]') || document.querySelector('#capture-captcha') || document.querySelector('#capture-arkose');
                     if (!arkose) return {ok:false, reason:'no-arkose-input'};
                     var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
                     setter.call(arkose, token);

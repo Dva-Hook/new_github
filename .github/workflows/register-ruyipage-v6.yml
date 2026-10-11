@@ -732,8 +732,10 @@ jobs:
               exit 45
             fi
             if [ "$last_rc" -eq 42 ]; then
-              echo "Arkose 题型不受支持，停止重试"
-              exit 42
+              # 退出码 42 = captcha-gate 声明的 provider 不是 Arkose（实测多为 KASADA）。
+              # 该分流由服务端按会话抽取：同一邮箱换新会话后实测可翻回 Arkose，
+              # 因此这里不再终止重试，交给下一次 attempt 重新建立会话。
+              echo "::warning::检测到非 Arkose 分流（KASADA）：属服务端按会话抽取，换新会话重试 ${attempt}/3"
             fi
             if [ "$last_rc" -eq 44 ]; then
               echo "captcha-gate 服务端已明确拒绝当前提交，停止无效重试；保留诊断结果"

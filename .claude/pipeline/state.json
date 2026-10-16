@@ -1,0 +1,9 @@
+{
+  "checkpoints": {
+    "scan": "completed"
+  },
+  "last_scanned": "2026-10-16T20:02:05+08:00",
+  "scan_mode": "FULL",
+  "scan_commit": "a394cec51a333db93ca31e957137b86ff3dc0ab0",
+  "project_doc": ".claude/pipeline/project-doc.md"
+}

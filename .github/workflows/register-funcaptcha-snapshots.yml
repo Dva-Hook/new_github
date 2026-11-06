@@ -80,6 +80,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: 配置 Python
+        id: python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -89,17 +90,27 @@ jobs:
         uses: actions/cache@v5
         with:
           path: .venv
-          key: ruyipage-snapshot-venv-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage-v4.txt') }}
+          # key 含完整 Python 版本：venv 的 bin/python 指向
+          # /opt/hostedtoolcache/Python/<x.y.z>/...，只写 py312 时换 patch 版本
+          # 的 runner 恢复后链接悬空，实测报 `.venv/bin/python: not found`（127）。
+          key: ruyipage-snapshot-venv-${{ runner.os }}-py${{ steps.python.outputs.python-version }}-${{ hashFiles('requirements-ruyipage-v4.txt') }}
           restore-keys: |
-            ruyipage-snapshot-venv-${{ runner.os }}-py312-
+            ruyipage-snapshot-venv-${{ runner.os }}-py${{ steps.python.outputs.python-version }}-
 
       - name: 构建 RuyiPage 虚拟环境
-        if: steps.venv.outputs.cache-hit != 'true'
+        # 缓存命中不代表可用（跨 Python patch 版本会让解释器悬空），
+        # 不能按 cache-hit 跳过，必须实测后再决定是否重建。
         run: |
           set -euo pipefail
-          python -m venv .venv
-          .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/pip install -r requirements-ruyipage-v4.txt
+          if [ -x .venv/bin/python ] && .venv/bin/python -c 'import sys' 2>/dev/null; then
+            echo "复用已缓存的 RuyiPage 虚拟环境：$(.venv/bin/python -V)"
+          else
+            echo "虚拟环境不可用，重建"
+            rm -rf .venv
+            python -m venv .venv
+            .venv/bin/python -m pip install --upgrade pip
+            .venv/bin/pip install -r requirements-ruyipage-v4.txt
+          fi
           .venv/bin/python - <<'PY'
           import importlib.util
           required = ["ruyipage", "curl_cffi", "bs4", "websocket", "requests", "PIL", "numpy", "cv2"]
@@ -142,6 +153,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: 配置 Python
+        id: python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -151,9 +163,11 @@ jobs:
         uses: actions/cache@v5
         with:
           path: .venv
-          key: ruyipage-snapshot-venv-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage-v4.txt') }}
+          # 与 deps-cache 保持一致：key 含完整 Python 版本，避免跨 patch 版本
+          # 复用导致 .venv/bin/python 符号链接悬空（退出码 127）。
+          key: ruyipage-snapshot-venv-${{ runner.os }}-py${{ steps.python.outputs.python-version }}-${{ hashFiles('requirements-ruyipage-v4.txt') }}
           restore-keys: |
-            ruyipage-snapshot-venv-${{ runner.os }}-py312-
+            ruyipage-snapshot-venv-${{ runner.os }}-py${{ steps.python.outputs.python-version }}-
 
       - name: 恢复 RuyiPage Firefox 运行时
         id: ruyi-runtime

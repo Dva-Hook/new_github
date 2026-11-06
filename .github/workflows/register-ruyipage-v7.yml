@@ -287,6 +287,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: 配置 Python
+        id: python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -296,7 +297,11 @@ jobs:
         uses: actions/cache@v5
         with:
           path: .venv
-          key: v6-venv-v2-${{ needs.prepare.outputs.solver }}-${{ needs.prepare.outputs.browser }}-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage-v5.txt', 'requirements-ruyipage-v4.txt', 'rank_v11/requirements.txt') }}
+          # key 必须含完整 Python 版本：venv 的 bin/python 指向
+          # /opt/hostedtoolcache/Python/<x.y.z>/...，只写 py312 时换 patch 版本
+          # 的 runner 恢复缓存会让链接悬空。虽然 venv-check 能兜底重建，
+          # 但 key 精确化后可避免每次跨版本都白重建一遍。
+          key: v6-venv-v2-${{ needs.prepare.outputs.solver }}-${{ needs.prepare.outputs.browser }}-${{ runner.os }}-py${{ steps.python.outputs.python-version }}-${{ hashFiles('requirements-ruyipage-v5.txt', 'requirements-ruyipage-v4.txt', 'rank_v11/requirements.txt') }}
 
       - name: 校验 V7 虚拟环境缓存
         id: venv-check
@@ -435,6 +440,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: 配置 Python
+        id: python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -444,7 +450,9 @@ jobs:
         uses: actions/cache@v5
         with:
           path: .venv
-          key: v6-venv-v2-${{ needs.prepare.outputs.solver }}-${{ needs.prepare.outputs.browser }}-${{ runner.os }}-py312-${{ hashFiles('requirements-ruyipage-v5.txt', 'requirements-ruyipage-v4.txt', 'rank_v11/requirements.txt') }}
+          # 与 deps-cache 保持一致：key 含完整 Python 版本，避免跨 patch 版本
+          # 复用导致 .venv/bin/python 符号链接悬空。
+          key: v6-venv-v2-${{ needs.prepare.outputs.solver }}-${{ needs.prepare.outputs.browser }}-${{ runner.os }}-py${{ steps.python.outputs.python-version }}-${{ hashFiles('requirements-ruyipage-v5.txt', 'requirements-ruyipage-v4.txt', 'rank_v11/requirements.txt') }}
 
       - name: 校验 V7 虚拟环境
         id: venv-check
